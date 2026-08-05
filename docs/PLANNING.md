@@ -84,6 +84,47 @@ Açık sorular:
 
 Definition of Done: Örnek bir PDF setinde her chunk doğru sayfa numarasına eşleniyor, birim testlerle doğrulanmış.
 
+### Kapanış Notu (2026-08-06)
+
+Sprint 1 tamamlandı, DoD karşılandı:
+
+- `app/ingestion/{models,parser,chunker}.py` eklendi. `parser.py` PyMuPDF (`fitz`)
+  ile sayfa başına metin bloklarını (`page.get_text("blocks")`) paragraf sınırı
+  olarak kabul edip sırayla `Paragraph(page_number, paragraph_index, text)`
+  üretiyor. Text-layer'ı olmayan (taranmış/image-only) sayfalar hiç paragraf
+  üretmeden sessizce atlanıyor — bilinçli kapsam dışı bırakma, testle
+  (`test_page_with_no_text_layer_is_skipped`) doğrulandı.
+- `chunker.py`: sayfa metnini paragraflardan birleştirip whitespace tabanlı bir
+  "token" (kelime) sayacıyla chunk'lıyor, chunk sınırını en yakın cümle sonuna
+  (`.`, `!`, `?`) kadar ileri itiyor ki cümle ortadan bölünmesin. Her chunk
+  `{doc_id, page_number, paragraph_index, char_range, text}` şemasına uyuyor.
+  `doc_id` = PDF dosya baytlarının SHA-256'sı (Sprint 2'deki idempotent
+  ingestion'la tutarlı olacak).
+- Test fixture'ı (`tests/conftest.py`) gerçek bir PDF'i PyMuPDF'in kendisiyle
+  programatik üretiyor: 3 sayfa metinli (bazıları çok paragraflı, biri chunk
+  bölünmesini tetikleyecek kadar uzun), 1 sayfa hiç text layer'ı olmayan
+  (sadece çizilmiş bir dikdörtgen) — taranmış PDF senaryosunu simüle ediyor.
+  Harici bir örnek PDF dosyası depoya commit'lenmedi; fixture testte anlık
+  üretiliyor, böylece hem deterministik hem de repo boyutu şişmiyor.
+- 16 test yeşil (13'ü bu sprint'te eklendi: `test_parser.py`, `test_chunker.py`),
+  `ruff check` temiz. `test_chunk_document_maps_each_chunk_to_correct_page`
+  testi, sayfa 1/2/3'teki her chunk'ın metninde o sayfaya özgü işaretleyicinin
+  (`PAGE{n}-`) bulunduğunu doğrulayarak sayfa-chunk eşleşmesini garanti ediyor.
+
+**Chunk boyutu kararı KESİN DEĞİL:** `DEFAULT_CHUNK_SIZE_TOKENS = 500` ve
+`DEFAULT_OVERLAP_TOKENS = 50` (`app/ingestion/chunker.py`), plandaki gibi bir
+başlangıç varsayımı olarak işaretlendi (kod içinde yorumla belirtildi). Ayrıca
+"token" sayımı gerçek bir LLM tokenizer'ı değil, kaba bir whitespace-split
+kelime sayacı — bu da geçici bir basitleştirme. Bu iki karar da **Sprint 5
+(cross-encoder reranking sonuçları)** ve **Sprint 9 (RAGAS/DeepEval evaluation
+metrikleri)** sonrasında gerçek verilerle revize edilecek; o zamana kadar
+kesinleşmiş kabul edilmemeli.
+
+Taranmış/image-only PDF desteği (OCR fallback) bu sprint'te olduğu gibi kapsam
+dışı kalmaya devam ediyor; ileride ayrı bir sprint/görev olarak ele alınabilir.
+
+Sıradaki: Sprint 2 — Embedding + Qdrant Ingestion.
+
 ## Sprint 2 — Embedding + Qdrant Ingestion
 
 Amaç: Chunk'ları embed edip Qdrant'a production-usulü bir şemayla yazmak.
