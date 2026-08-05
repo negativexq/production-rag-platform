@@ -1,8 +1,10 @@
 import pytest
 from qdrant_client import QdrantClient
 
+import app.retrieval.search as search_module
 from app.ingestion.models import Chunk
 from app.ingestion.qdrant_store import QdrantStore
+from app.retrieval.filters import build_filter
 from app.retrieval.search import SEARCH_QUERY_PREFIX, search
 from app.retrieval.sparse import SparseVector
 
@@ -90,3 +92,27 @@ async def test_search_returns_hybrid_results():
 
     assert len(results) == 1
     assert results[0].payload["text"] == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_search_builds_and_passes_filter_from_doc_ids(monkeypatch):
+    client = QdrantClient(":memory:")
+    captured = {}
+
+    def fake_hybrid_search(client_, collection_name, dense_vector, sparse_vector, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(search_module, "hybrid_search", fake_hybrid_search)
+
+    await search(
+        "hello",
+        ollama=_FakeOllama(),
+        sparse_encoder=_FakeSparseEncoder(),
+        qdrant_client=client,
+        collection_name=COLLECTION,
+        embed_model="nomic-embed-text",
+        doc_ids=["doc-a", "doc-b"],
+    )
+
+    assert captured["filters"] == build_filter(doc_ids=["doc-a", "doc-b"])

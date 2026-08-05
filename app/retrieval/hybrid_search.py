@@ -21,12 +21,14 @@ def dense_only_search(
     collection_name: str,
     query_dense_vector: list[float],
     top_k: int = DEFAULT_TOP_K,
+    filters: qmodels.Filter | None = None,
 ) -> list[SearchResult]:
     response = client.query_points(
         collection_name=collection_name,
         query=query_dense_vector,
         using=VECTOR_NAME,
         limit=top_k,
+        query_filter=filters,
         with_payload=True,
     )
     return [SearchResult(score=p.score, payload=p.payload) for p in response.points]
@@ -39,7 +41,14 @@ def hybrid_search(
     query_sparse_vector: SparseVector,
     top_k: int = DEFAULT_TOP_K,
     prefetch_limit: int = DEFAULT_PREFETCH_LIMIT,
+    filters: qmodels.Filter | None = None,
 ) -> list[SearchResult]:
+    # A single top-level query_filter is enough — verified against a real
+    # Qdrant server that it's pushed down into each Prefetch's candidate
+    # selection, not just applied after fusion (see docs/PLANNING.md Sprint 4
+    # closing note). NOTE: qdrant-client's local (":memory:") mode does NOT
+    # reproduce this — it drops the filter entirely for prefetch+fusion
+    # queries, so any test exercising this must run against a real server.
     response = client.query_points(
         collection_name=collection_name,
         prefetch=[
@@ -54,6 +63,7 @@ def hybrid_search(
         ],
         query=qmodels.FusionQuery(fusion=qmodels.Fusion.RRF),
         limit=top_k,
+        query_filter=filters,
         with_payload=True,
     )
     return [SearchResult(score=p.score, payload=p.payload) for p in response.points]

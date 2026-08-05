@@ -1,7 +1,9 @@
 from typing import Protocol
 
 from qdrant_client import QdrantClient
+from qdrant_client.http import models as qmodels
 
+from app.retrieval.filters import build_filter
 from app.retrieval.hybrid_search import DEFAULT_TOP_K, SearchResult, hybrid_search
 from app.retrieval.sparse import SparseVector
 
@@ -27,7 +29,19 @@ async def search(
     collection_name: str,
     embed_model: str,
     top_k: int = DEFAULT_TOP_K,
+    doc_ids: list[str] | None = None,
+    source_filenames: list[str] | None = None,
+    page_numbers: list[int] | None = None,
+    filters: qmodels.Filter | None = None,
 ) -> list[SearchResult]:
     dense_vector = await ollama.embed(query, model=embed_model, prefix=SEARCH_QUERY_PREFIX)
     sparse_vector = sparse_encoder.embed_query(query)
-    return hybrid_search(qdrant_client, collection_name, dense_vector, sparse_vector, top_k=top_k)
+    resolved_filters = filters or build_filter(doc_ids, source_filenames, page_numbers)
+    return hybrid_search(
+        qdrant_client,
+        collection_name,
+        dense_vector,
+        sparse_vector,
+        top_k=top_k,
+        filters=resolved_filters,
+    )

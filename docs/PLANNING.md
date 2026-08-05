@@ -287,6 +287,56 @@ Açık sorular:
 
 Definition of Done: Filtreli ve filtresiz aynı sorgu farklı, doğru sonuç setleri döndürüyor.
 
+### Kapanış Notu (2026-08-06)
+
+Sprint 4 tamamlandı, DoD karşılandı. Açık soru karara bağlandı:
+
+- **Filtrelenebilir alanlar: `doc_id`, `source_filename`, `page_number`** —
+  hepsi Sprint 1-3'ten beri payload'da zaten var, **yeni bir ingestion alanı
+  eklenmedi**. `app/retrieval/filters.py:build_filter()` bu üç alanı kabul
+  ediyor (her biri opsiyonel liste, AND ile birleşiyor, alan içi değerler
+  OR/`MatchAny`).
+- **Tarih/tag alanları bilinçli olarak kapsam dışı bırakıldı** — bugün
+  ingestion'da böyle bir alan yok ve otomatik çıkarımı (dosya sistemi tarihi
+  mi, PDF metadata'sı mı, manuel etiketleme mi) ayrı bir tasarım kararı
+  gerektiriyor. **İleride ayrı bir mini-sprint olarak ele alınmalı**: ingestion'a
+  geriye dönük tarih/tag alanı + payload index'i + filtre desteği eklemek.
+
+**Beklenmeyen bulgu — filtre+fusion etkileşimi gerçek sunucuda doğru, ama
+`:memory:` local test modunda YANLIŞ**: Planın istediği gibi varsayılmadı,
+gerçek Qdrant'a karşı test edildi. Bulgular:
+
+1. **Gerçek sunucuda top-level `query_filter`, `prefetch` aşamasına da
+   uygulanıyor** (fusion'dan önce, aday havuzu daraltılırken) — extreme bir
+   stres testinde (`prefetch_limit=1`, filtrelenen dokümanın 50 kat daha
+   yüksek skorlu rakibi varken) bile doğru sonucu buluyor. Bu yüzden filtreyi
+   her `Prefetch`'e ayrı ayrı geçirmeye gerek yok, tek bir top-level
+   `query_filter` yeterli (`app/retrieval/hybrid_search.py`).
+2. **`qdrant-client`'ın `:memory:` (local) modu bu davranışı DOĞRU
+   YANSITMIYOR** — aynı senaryo `:memory:`'de çalıştırıldığında, `query_filter`
+   fusion sorgularında (prefetch+`FusionQuery`) tamamen görmezden geliniyor;
+   filtrelenmiş olması gereken point yine sonuçlarda çıkıyor. Düz (fusion'suz)
+   filtreli bir sorguda `:memory:` doğru çalışıyor — sorun özellikle
+   prefetch+fusion kombinasyonunda. **Sonuç**: filtre+fusion davranışını
+   doğrulayan hiçbir test `:memory:` ile yazılamaz, gerçek bir Qdrant sunucusu
+   şart (`tests/test_filters_e2e.py`, servis kapalıyken atlanıyor). Bu, Sprint
+   3'te bulunan `:memory:` modundaki boş-collection/sparse-IDF `KeyError`
+   bug'ından sonra bu projede tespit edilen **ikinci** local-mode/gerçek-sunucu
+   davranış farkı — `:memory:`'nin hız için kullanışlı ama fusion+filter gibi
+   daha yeni/karmaşık Query API özelliklerinde güvenilir bir sunucu vekili
+   olmadığı netleşti.
+
+Somut kanıt (`tests/test_filters_e2e.py`, gerçek Qdrant'a karşı): `doc_id`
+filtresi olmadan hybrid search, sparse eşleşmesi sayesinde `target-doc`'u
+buluyor; `doc_ids=["other-doc"]` filtresiyle aynı sorgu **sadece** `other-doc`
+sonuçlarını döndürüyor — `target-doc` filtre nedeniyle tamamen dışlanıyor.
+İki sonuç kümesi farklı ve doğru.
+
+46 test yeşil (5 yeni: `test_filters.py`, `test_filters_e2e.py`, ve
+`test_search.py`'a filtre wiring testi), `ruff check` temiz.
+
+Sıradaki: Sprint 5 — Cross-Encoder Reranking.
+
 ## Sprint 5 — Cross-Encoder Reranking
 
 Amaç: Hybrid search'ten gelen top-k adayları gerçek alaka düzeyine göre yeniden sıralamak.
