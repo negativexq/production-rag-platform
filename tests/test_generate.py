@@ -1,7 +1,17 @@
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from app.llm.generate import stream_answer
 from app.retrieval.hybrid_search import SearchResult
+
+
+def _local_tracer_with_exporter():
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return provider.get_tracer("test"), exporter
 
 
 def _chunk(page: int, paragraph: int, text: str) -> SearchResult:
@@ -23,11 +33,11 @@ class _FakeOllama:
             yield token
 
 
-async def _collect(query, chunks, ollama, model="qwen", prompt_version="v1"):
+async def _collect(query, chunks, ollama, model="qwen", prompt_version="v1", tracer=None):
     return [
         event
         async for event in stream_answer(
-            query, chunks, ollama, model=model, prompt_version=prompt_version
+            query, chunks, ollama, model=model, prompt_version=prompt_version, tracer=tracer
         )
     ]
 
@@ -100,3 +110,37 @@ async def test_stream_answer_uses_requested_prompt_version_content():
     await _collect("How long?", chunks, ollama, prompt_version="v2")
 
     assert ollama.received_messages[0]["content"] == load_system_prompt("v2")
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_creates_generate_span_with_attributes():
+    chunks = [_chunk(2, 0, "Refunds take 30 days.")]
+    ollama = _FakeOllama(["Refunds take 30 days [s.2/0]."])
+    tracer, exporter = _local_tracer_with_exporter()
+
+    await _collect("How long?", chunks, ollama, model="qwen", prompt_version="v1", tracer=tracer)
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    assert "generate" in spans
+    attrs = spans["generate"].attributes
+    assert attrs["generate.model"] == "qwen"
+    assert attrs["generate.prompt_version"] == "v1"
+    assert attrs["generate.context_chunk_count"] == 1
+    assert attrs["generate.token_count"] == 1
+    assert attrs["generate.grounded"] is True
+    assert attrs["generate.citation_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_generate_span_does_not_contain_full_answer_text():
+    # high-cardinality data (full chunk text / full generated answer) must
+    # never end up as a span attribute — see docs/PLANNING.md Sprint 8 plan.
+    chunks = [_chunk(2, 0, "Refunds take 30 days.")]
+    ollama = _FakeOllama(["Refunds take 30 days [s.2/0]."])
+    tracer, exporter = _local_tracer_with_exporter()
+
+    await _collect("How long?", chunks, ollama, tracer=tracer)
+
+    generate_span = next(s for s in exporter.get_finished_spans() if s.name == "generate")
+    for value in generate_span.attributes.values():
+        assert "Refunds take 30 days" not in str(value)

@@ -3,9 +3,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from opentelemetry import trace
+
 from app.ingestion.chunker import DEFAULT_CHUNK_SIZE_TOKENS, DEFAULT_OVERLAP_TOKENS, chunk_document
 from app.ingestion.qdrant_store import QdrantStore
 from app.retrieval.sparse import SparseVector
+from app.shared.tracing import get_tracer
 
 # nomic-embed-text requires a task instruction prefix on the embedded text;
 # "search_document: " is the indexing-side prefix (query side uses
@@ -33,21 +36,39 @@ async def ingest_path(
     chunk_size_tokens: int = DEFAULT_CHUNK_SIZE_TOKENS,
     overlap_tokens: int = DEFAULT_OVERLAP_TOKENS,
     batch_size: int = 64,
+    tracer: trace.Tracer | None = None,
 ) -> IngestStats:
+    tracer = tracer or get_tracer(__name__)
     store.ensure_collection()
 
     files_processed = 0
     chunks_upserted = 0
 
     for pdf_path in sorted(Path(path).glob("*.pdf")):
-        chunks = chunk_document(str(pdf_path), chunk_size_tokens, overlap_tokens)
+        with tracer.start_as_current_span("ingest_document") as doc_span:
+            doc_span.set_attribute("ingest.source_filename", pdf_path.name)
 
-        for batch_start in range(0, len(chunks), batch_size):
-            batch = chunks[batch_start : batch_start + batch_size]
-            dense_vectors = [await embed_fn(chunk.text) for chunk in batch]
-            sparse_vectors = [sparse_encoder.embed_document(chunk.text) for chunk in batch]
-            store.upsert_chunks(batch, dense_vectors, sparse_vectors, source_filename=pdf_path.name)
-            chunks_upserted += len(batch)
+            with tracer.start_as_current_span("parse_and_chunk") as span:
+                chunks = chunk_document(str(pdf_path), chunk_size_tokens, overlap_tokens)
+                span.set_attribute("parse.chunk_count", len(chunks))
+
+            for batch_start in range(0, len(chunks), batch_size):
+                batch = chunks[batch_start : batch_start + batch_size]
+
+                with tracer.start_as_current_span("embed_batch") as span:
+                    span.set_attribute("embed.chunk_count", len(batch))
+                    dense_vectors = [await embed_fn(chunk.text) for chunk in batch]
+                    sparse_vectors = [sparse_encoder.embed_document(chunk.text) for chunk in batch]
+
+                with tracer.start_as_current_span("upsert_batch") as span:
+                    span.set_attribute("upsert.chunk_count", len(batch))
+                    store.upsert_chunks(
+                        batch, dense_vectors, sparse_vectors, source_filename=pdf_path.name
+                    )
+
+                chunks_upserted += len(batch)
+
+            doc_span.set_attribute("ingest.chunk_count", len(chunks))
 
         files_processed += 1
 

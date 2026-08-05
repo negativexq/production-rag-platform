@@ -11,6 +11,7 @@ from app.reranker.cross_encoder import CrossEncoderReranker
 from app.retrieval.search import search
 from app.retrieval.sparse import SparseEncoder
 from app.shared.config import settings
+from app.shared.tracing import get_tracer
 
 router = APIRouter()
 
@@ -48,34 +49,50 @@ def _get_qdrant_client() -> QdrantClient:
 
 
 async def _sse_event_stream(question: str):
+    tracer = get_tracer(__name__)
     ollama = OllamaClient(base_url=settings.ollama_base_url)
-    try:
-        chunks = await search(
-            question,
-            ollama=ollama,
-            sparse_encoder=_get_sparse_encoder(),
-            qdrant_client=_get_qdrant_client(),
-            collection_name=settings.qdrant_collection_name,
-            embed_model=settings.ollama_embed_model,
-            reranker=_get_reranker(),
-        )
-        async for event in stream_answer(
-            question,
-            chunks,
-            ollama,
-            model=settings.ollama_model,
-            prompt_version=settings.active_prompt_version,
-        ):
-            if event["type"] == "token":
-                yield f"data: {json.dumps({'token': event['content']})}\n\n"
-            elif event["type"] == "metadata":
-                payload = {k: v for k, v in event.items() if k != "type"}
-                yield f"event: metadata\ndata: {json.dumps(payload)}\n\n"
-            else:
-                payload = {k: v for k, v in event.items() if k != "type"}
-                yield f"event: grounding\ndata: {json.dumps(payload)}\n\n"
-    finally:
-        await ollama.aclose()
+    # This span wraps the whole request generator, including every `yield`
+    # below — it only closes once the generator is exhausted (streaming
+    # fully finished), the same reasoning as generate.py's "generate" span.
+    with tracer.start_as_current_span("chat_request") as request_span:
+        request_span.set_attribute("chat.question_char_count", len(question))
+        try:
+            # First request in the process pays for lazy model loading here
+            # (~9s for the cross-encoder — see Sprint 5/6). Without its own
+            # span this showed up as an unexplained gap in chat_request's
+            # duration not covered by any child span; a real /chat request
+            # traced in Jaeger caught this (see docs/PLANNING.md Sprint 8
+            # closing note), so it gets instrumented rather than left silent.
+            with tracer.start_as_current_span("load_models"):
+                sparse_encoder = _get_sparse_encoder()
+                reranker = _get_reranker()
+
+            chunks = await search(
+                question,
+                ollama=ollama,
+                sparse_encoder=sparse_encoder,
+                qdrant_client=_get_qdrant_client(),
+                collection_name=settings.qdrant_collection_name,
+                embed_model=settings.ollama_embed_model,
+                reranker=reranker,
+            )
+            async for event in stream_answer(
+                question,
+                chunks,
+                ollama,
+                model=settings.ollama_model,
+                prompt_version=settings.active_prompt_version,
+            ):
+                if event["type"] == "token":
+                    yield f"data: {json.dumps({'token': event['content']})}\n\n"
+                elif event["type"] == "metadata":
+                    payload = {k: v for k, v in event.items() if k != "type"}
+                    yield f"event: metadata\ndata: {json.dumps(payload)}\n\n"
+                else:
+                    payload = {k: v for k, v in event.items() if k != "type"}
+                    yield f"event: grounding\ndata: {json.dumps(payload)}\n\n"
+        finally:
+            await ollama.aclose()
 
 
 @router.post("/chat")

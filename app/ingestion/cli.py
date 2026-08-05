@@ -8,9 +8,11 @@ from app.ingestion.qdrant_store import QdrantStore
 from app.llm.ollama_client import OllamaClient
 from app.retrieval.sparse import SparseEncoder
 from app.shared.config import settings
+from app.shared.tracing import setup_tracing
 
 
 async def _run(path: str) -> None:
+    setup_tracing()
     ollama = OllamaClient(base_url=settings.ollama_base_url)
     qdrant_client = QdrantClient(url=settings.qdrant_url)
     store = QdrantStore(client=qdrant_client, collection_name=settings.qdrant_collection_name)

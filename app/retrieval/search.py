@@ -1,11 +1,13 @@
 from typing import Protocol
 
+from opentelemetry import trace
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
 from app.retrieval.filters import build_filter
 from app.retrieval.hybrid_search import SearchResult, hybrid_search
 from app.retrieval.sparse import SparseVector
+from app.shared.tracing import get_tracer
 
 # Query-side counterpart to app/ingestion/ingest.py's SEARCH_DOCUMENT_PREFIX —
 # nomic-embed-text requires this prefix on the *query* text for retrieval to
@@ -46,19 +48,37 @@ async def search(
     source_filenames: list[str] | None = None,
     page_numbers: list[int] | None = None,
     filters: qmodels.Filter | None = None,
+    tracer: trace.Tracer | None = None,
 ) -> list[SearchResult]:
-    dense_vector = await ollama.embed(query, model=embed_model, prefix=SEARCH_QUERY_PREFIX)
-    sparse_vector = sparse_encoder.embed_query(query)
+    tracer = tracer or get_tracer(__name__)
+
+    with tracer.start_as_current_span("embed_query") as span:
+        span.set_attribute("embed.model", embed_model)
+        dense_vector = await ollama.embed(query, model=embed_model, prefix=SEARCH_QUERY_PREFIX)
+        sparse_vector = sparse_encoder.embed_query(query)
+
     resolved_filters = filters or build_filter(doc_ids, source_filenames, page_numbers)
-    candidates = hybrid_search(
-        qdrant_client,
-        collection_name,
-        dense_vector,
-        sparse_vector,
-        top_k=top_k,
-        filters=resolved_filters,
-    )
+
+    with tracer.start_as_current_span("retrieve_hybrid") as span:
+        span.set_attribute("retrieve.top_k", top_k)
+        candidates = hybrid_search(
+            qdrant_client,
+            collection_name,
+            dense_vector,
+            sparse_vector,
+            top_k=top_k,
+            filters=resolved_filters,
+        )
+        span.set_attribute("retrieve.candidate_count", len(candidates))
+        if candidates:
+            span.set_attribute("retrieve.top_score", candidates[0].score)
 
     if reranker is not None:
-        return reranker.rerank(query, candidates, top_n=top_n)
+        with tracer.start_as_current_span("rerank") as span:
+            span.set_attribute("rerank.top_n", top_n)
+            results = reranker.rerank(query, candidates, top_n=top_n)
+            if results:
+                span.set_attribute("rerank.top_score", results[0].score)
+        return results
+
     return candidates[:top_n]

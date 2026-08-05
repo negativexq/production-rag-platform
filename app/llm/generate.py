@@ -1,9 +1,12 @@
 from collections.abc import AsyncIterator
 from typing import Protocol
 
+from opentelemetry import trace
+
 from app.llm.grounding import check_grounding
 from app.llm.prompt import build_messages
 from app.retrieval.hybrid_search import SearchResult
+from app.shared.tracing import get_tracer
 
 
 class StreamingOllamaProtocol(Protocol):
@@ -16,6 +19,7 @@ async def stream_answer(
     ollama: StreamingOllamaProtocol,
     model: str,
     prompt_version: str,
+    tracer: trace.Tracer | None = None,
 ) -> AsyncIterator[dict]:
     """Stream a grounded answer as a sequence of events:
     {"type": "metadata", "prompt_version": str} first (so the caller knows
@@ -30,20 +34,40 @@ async def stream_answer(
     full answer (with its citations) exists, by which point the tokens have
     already been streamed. See docs/PLANNING.md Sprint 6 closing note for
     why a failed check warns instead of blocking.
+
+    The whole body (including every yield) runs inside a single "generate"
+    span — a Python context manager stays entered across a generator's
+    yields, only closing when the generator is exhausted, so the span's
+    duration covers the entire stream, not just the time to the first
+    token. Confirmed against a real request, not assumed — see
+    docs/PLANNING.md Sprint 8 closing note.
     """
-    yield {"type": "metadata", "prompt_version": prompt_version}
+    tracer = tracer or get_tracer(__name__)
 
-    messages = build_messages(query, chunks, version=prompt_version)
-    answer_parts = []
+    with tracer.start_as_current_span("generate") as span:
+        span.set_attribute("generate.model", model)
+        span.set_attribute("generate.prompt_version", prompt_version)
+        span.set_attribute("generate.context_chunk_count", len(chunks))
 
-    async for token in ollama.stream_chat(messages, model=model):
-        answer_parts.append(token)
-        yield {"type": "token", "content": token}
+        yield {"type": "metadata", "prompt_version": prompt_version}
 
-    grounding = check_grounding("".join(answer_parts), chunks)
-    yield {
-        "type": "grounding",
-        "grounded": grounding.grounded,
-        "citations_found": grounding.citations_found,
-        "ungrounded_citations": grounding.ungrounded_citations,
-    }
+        messages = build_messages(query, chunks, version=prompt_version)
+        answer_parts = []
+        token_count = 0
+
+        async for token in ollama.stream_chat(messages, model=model):
+            token_count += 1
+            answer_parts.append(token)
+            yield {"type": "token", "content": token}
+
+        grounding = check_grounding("".join(answer_parts), chunks)
+        span.set_attribute("generate.token_count", token_count)
+        span.set_attribute("generate.grounded", grounding.grounded)
+        span.set_attribute("generate.citation_count", len(grounding.citations_found))
+
+        yield {
+            "type": "grounding",
+            "grounded": grounding.grounded,
+            "citations_found": grounding.citations_found,
+            "ungrounded_citations": grounding.ungrounded_citations,
+        }

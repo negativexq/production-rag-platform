@@ -547,6 +547,84 @@ Açık sorular:
 
 Definition of Done: Jaeger UI'da tek bir sorgunun tüm pipeline'ı, adım adım latency'siyle birlikte waterfall görünümünde izlenebiliyor.
 
+### Kapanış Notu (2026-08-06)
+
+Sprint 8 tamamlandı, DoD karşılandı. Açık soru karara bağlandı:
+
+- **Yüksek kardinaliteli attribute'lar span'e YAZILMIYOR** — hiçbir span'e
+  tam chunk text'i, tam prompt içeriği veya tam cevap metni yazılmadı;
+  sadece sayılar/referanslar (`chunk_count`, `token_count`,
+  `citation_count`, `top_score`, `source_filename` gibi dosya adı referansı).
+  Bunu iddia olarak bırakmadık: `test_stream_answer_generate_span_does_not_contain_full_answer_text`
+  ve `test_ingest_path_spans_do_not_contain_chunk_text` testleri, gerçek
+  chunk metninin (`"PAGE1-PARA0"` gibi) hiçbir span attribute'unda
+  görünmediğini otomatik doğruluyor.
+
+**Span'e konan attribute'lar**:
+- `embed_query`: `embed.model`
+- `retrieve_hybrid`: `retrieve.candidate_count`, `retrieve.top_k`,
+  `retrieve.top_score` — **sadece fused RRF skoru**. Qdrant'ın gerçek
+  `ScoredPoint` yanıtı incelendi (`dir()` ile alan listesi çıkarıldı):
+  ayrı dense/sparse alt-skorları döndürülmüyor, sadece birleşik `score` var.
+  Bunları almak isteseydik dense-only + sparse-only + fused olmak üzere 3
+  ayrı sorgu gerekirdi — retrieval gecikmesini gözlemlenebilirlik uğruna 3
+  katına çıkarmak yerine, sadece fused skoru kaydetmeye karar verildi.
+- `rerank`: `rerank.top_n`, `rerank.top_score`
+- `generate`: `generate.model`, `generate.prompt_version`,
+  `generate.context_chunk_count`, `generate.token_count`, `generate.grounded`,
+  `generate.citation_count`
+- `chat_request` (kök span): `chat.question_char_count`
+- `load_models`, `ingest_document`, `parse_and_chunk`, `embed_batch`,
+  `upsert_batch`: chunk/dosya sayıları ve dosya adı referansı
+
+**Streaming span'in ömrü — varsayılmadı, gerçek istekle doğrulandı**:
+`generate` (ve kök `chat_request`) span'i, ilgili async generator'ın **tüm**
+gövdesini (her `yield` dahil) sarıyor. Python'da bir context manager,
+generator suspend/resume (yield) sırasında kapanmıyor — sadece generator
+tükenince kapanıyor. Bunu gerçek bir `/chat` isteğiyle test ettik: Jaeger'dan
+çekilen gerçek trace'te, warm (modeller zaten yüklü) bir istekte
+`chat_request` kök span süresi (**1833.2ms**) ile çocuk span'lerin toplamı
+(`embed_query 72.7 + retrieve_hybrid 7.2 + rerank 262.5 + generate 1489.8 =
+1832.2ms`) neredeyse birebir eşleşti (fark: 1ms) — yani `generate` span'i
+gerçekten stream'in tamamı bitene kadar açık kaldı, sadece ilk token'a kadar
+değil. Eğer span erken kapansaydı, kapanıştan stream'in gerçek bitişine kadar
+açıklanamayan bir boşluk olurdu.
+
+**Beklenmeyen bulgu — ilk istekte ~9.6s'lik açıklanamayan boşluk**: İlk gerçek
+`/chat` isteğinde kök span 11454.4ms sürdü ama çocuk span'lerin toplamı
+sadece ~1824ms'ydi — aradaki ~9.6s, `CrossEncoderReranker`/`SparseEncoder`'ın
+process başına bir kerelik lazy model yüklemesiydi (Sprint 5/6'da bilinen
+~9s'lik maliyet), ama hiçbir span'e sarılmamıştı, yani waterfall'da
+açıklanamayan bir boşluk olarak görünüyordu. Bu, sadece not düşülüp
+geçilmedi — `app/api/chat.py`'e ayrı bir `load_models` span'i eklenerek
+düzeltildi. Düzeltme sonrası aynı senaryoda kök span ile çocuk span'lerin
+toplamı arasındaki fark **6.8ms**'ye indi (tamamen ihmal edilebilir,
+span açma/kapama overhead'i kadar).
+
+**Tracing overhead'i ölçüldü (varsayılmadı)**: İzole bir benchmark'ta
+(5000 span oluştur/kapat döngüsü), OTel'in no-op tracer'ı ~0.68μs/span
+sürerken, gerçek `BatchSpanProcessor` + OTLP exporter'lı tracer ~12.24μs/span
+sürdü — span başına **~11.5μs** ek yük. Bir sorgu tipik olarak 5-6 span
+üretiyor (`chat_request, load_models, embed_query, retrieve_hybrid, rerank,
+generate`), yani toplam ek yük **~70 mikrosaniye** — saniyeler süren LLM
+generation'ına kıyasla (%0.004) tamamen ihmal edilebilir. `BatchSpanProcessor`
+export'u arka planda ayrı bir thread'de yaptığı için ana istek yolunu
+bloklamıyor.
+
+**Somut kanıt**: Gerçek bir `/chat` isteği sonrası Jaeger API'sinden
+(`/api/traces/{trace_id}`) çekilen trace, tek bir `traceID` altında
+`chat_request` → `load_models`, `embed_query`, `retrieve_hybrid`, `rerank`,
+`generate` span'lerinin hepsini, doğru parent-child ilişkisiyle ve
+latency'leriyle içeriyordu (bkz. yukarıdaki ölçümler).
+`tests/test_tracing_e2e.py` bunu otomatik olarak da doğruluyor (gerçek
+Ollama+Qdrant+Jaeger'a karşı, servisler kapalıyken atlanıyor): tek trace,
+beklenen 5 span adı, hepsi kökün çocuğu, hiçbir span'de chunk text'i sızıntısı yok.
+
+88 test yeşil (12 yeni: `test_tracing.py`, `search.py`/`generate.py`/
+`ingest.py`'a span testleri, `test_tracing_e2e.py`), `ruff check` temiz.
+
+Sıradaki: Sprint 9 — Evaluation (RAGAS/DeepEval).
+
 ## Sprint 9 — Evaluation (RAGAS/DeepEval)
 
 Amaç: Sistemin retrieval ve generation kalitesini nesnel metriklerle ölçmek.

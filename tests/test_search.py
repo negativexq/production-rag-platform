@@ -1,4 +1,7 @@
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from qdrant_client import QdrantClient
 
 import app.retrieval.search as search_module
@@ -8,6 +11,13 @@ from app.retrieval.filters import build_filter
 from app.retrieval.hybrid_search import SearchResult
 from app.retrieval.search import RERANK_CANDIDATE_K, SEARCH_QUERY_PREFIX, search
 from app.retrieval.sparse import SparseVector
+
+
+def _local_tracer_with_exporter():
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return provider.get_tracer("test"), exporter
 
 COLLECTION = "test_search"
 
@@ -209,3 +219,82 @@ async def test_search_without_reranker_falls_back_to_hybrid_order_truncated_to_t
     )
 
     assert [r.payload["text"] for r in results] == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_search_creates_embed_and_retrieve_spans_with_attributes():
+    client = QdrantClient(":memory:")
+    store = QdrantStore(client=client, collection_name=COLLECTION + "3")
+    store.ensure_collection()
+    dense_vector = [0.0] * 768
+    dense_vector[0] = 1.0
+    store.upsert_chunks(
+        [_chunk("hello world")],
+        [dense_vector],
+        [SparseVector(indices=[42], values=[2.0])],
+        source_filename="doc.pdf",
+    )
+    tracer, exporter = _local_tracer_with_exporter()
+
+    await search(
+        "hello",
+        ollama=_FakeOllama(),
+        sparse_encoder=_FakeSparseEncoder(),
+        qdrant_client=client,
+        collection_name=COLLECTION + "3",
+        embed_model="nomic-embed-text",
+        tracer=tracer,
+    )
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    assert "embed_query" in spans
+    assert spans["embed_query"].attributes["embed.model"] == "nomic-embed-text"
+    assert "retrieve_hybrid" in spans
+    assert spans["retrieve_hybrid"].attributes["retrieve.candidate_count"] == 1
+    assert spans["retrieve_hybrid"].attributes["retrieve.top_k"] == RERANK_CANDIDATE_K
+    assert "retrieve.top_score" in spans["retrieve_hybrid"].attributes
+
+
+@pytest.mark.asyncio
+async def test_search_creates_rerank_span_only_when_reranker_provided():
+    client = QdrantClient(":memory:")
+    hybrid_candidates = [SearchResult(score=0.9, payload={"text": "first"})]
+
+    def fake_hybrid_search(client_, collection_name, dense_vector, sparse_vector, **kwargs):
+        return hybrid_candidates
+
+    import app.retrieval.search as sm
+
+    original = sm.hybrid_search
+    sm.hybrid_search = fake_hybrid_search
+    try:
+        tracer, exporter = _local_tracer_with_exporter()
+        await search(
+            "hello",
+            ollama=_FakeOllama(),
+            sparse_encoder=_FakeSparseEncoder(),
+            qdrant_client=client,
+            collection_name=COLLECTION,
+            embed_model="nomic-embed-text",
+            reranker=_FakeReranker(),
+            top_n=1,
+            tracer=tracer,
+        )
+        span_names = {span.name for span in exporter.get_finished_spans()}
+        assert "rerank" in span_names
+
+        tracer2, exporter2 = _local_tracer_with_exporter()
+        await search(
+            "hello",
+            ollama=_FakeOllama(),
+            sparse_encoder=_FakeSparseEncoder(),
+            qdrant_client=client,
+            collection_name=COLLECTION,
+            embed_model="nomic-embed-text",
+            top_n=1,
+            tracer=tracer2,
+        )
+        span_names2 = {span.name for span in exporter2.get_finished_spans()}
+        assert "rerank" not in span_names2
+    finally:
+        sm.hybrid_search = original
