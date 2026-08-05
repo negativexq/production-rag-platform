@@ -84,6 +84,21 @@ curl http://localhost:8000/health/ollama
 `/health/ollama` should connect to native Ollama and return the same model list as
 `ollama list`. If Ollama isn't running, it returns 503 and `{"status": "unreachable", ...}`.
 
+## PDF Ingestion
+
+Parses, chunks, embeds (with `nomic-embed-text`), and writes every `.pdf` in a folder
+to Qdrant:
+
+```bash
+make ingest PATH_ARG=./docs
+```
+
+- Re-ingesting the same file doesn't create duplicate points (idempotent via a
+  content hash + deterministic point ID).
+- Qdrant collection: `rag_chunks` (dense, 768 dimensions, cosine distance).
+- Scanned/image-only (no text layer) PDFs aren't supported — see
+  [docs/PLANNING.md](docs/PLANNING.md) Sprint 1.
+
 ## Development
 
 ```bash

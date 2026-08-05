@@ -1,4 +1,4 @@
-.PHONY: dev test lint up down
+.PHONY: dev test lint up down ingest
 
 VENV := .venv/bin
 
@@ -16,3 +16,6 @@ up:
 
 down:
 	docker compose down
+
+ingest:
+	$(VENV)/python -m app.ingestion.cli --path $(PATH_ARG)

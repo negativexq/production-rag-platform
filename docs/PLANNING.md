@@ -143,6 +143,52 @@ Açık sorular:
 
 Definition of Done: Bir klasördeki tüm PDF'ler tek komutla Qdrant'a yükleniyor, aynı dosyanın iki kez ingest edilmesi duplicate yaratmıyor.
 
+### Kapanış Notu (2026-08-06)
+
+Sprint 2 tamamlandı, DoD karşılandı. Açık sorular **kesin karara bağlandı**:
+
+- **Embedding boyutu: 768** — varsayılmadı, gerçek bir `curl
+  /api/embeddings` çağrısıyla ölçüldü ve `/api/tags`'daki
+  `embedding_length: 768` alanıyla teyit edildi
+  (`app/ingestion/qdrant_store.py:EMBEDDING_DIM`).
+- **Mesafe metriği: Cosine** — Nomic'in HuggingFace model kartı embedding'lerin
+  L2-normalize edilip cosine similarity ile karşılaştırılmasını öngörüyor;
+  Qdrant collection'ı `Distance.COSINE` ile oluşturuluyor.
+- **Beklenmeyen bulgu — task prefix zorunluluğu**: Planda yoktu, araştırma
+  sırasında ortaya çıktı. `nomic-embed-text`, embed edilecek metnin bir görev
+  prefix'i (`"search_document: "` ingestion için, `"search_query: "` sorgu
+  için) içermesini *şart koşuyor* — yoksa embedding kalitesi düşük kalıyor.
+  Bu sprint'te `"search_document: "` prefix'i uygulandı
+  (`app/ingestion/ingest.py:SEARCH_DOCUMENT_PREFIX`); sorgu tarafı Sprint 3'te
+  hybrid search implementasyonuna eklenecek — **Sprint 3 başlarken bu
+  hatırlanmalı**, aksi halde dense tarafın retrieval kalitesi düşük çıkar.
+- **Idempotency stratejisi**: content-hash tabanlı `doc_id` (SHA-256, Sprint
+  1'den) + chunk alanlarından (`doc_id, page_number, paragraph_index,
+  char_range`) türetilen deterministic `uuid5` point ID
+  (`QdrantStore.point_id_for`). Aynı dosya tekrar ingest edildiğinde parser
+  deterministic olduğu için aynı point ID'ler üretilir, Qdrant upsert
+  üzerine yazar — duplicate oluşmaz. **Bilinen sınırlama**: içerik birebir
+  aynı olan iki farklı dosya adı aynı `doc_id`'yi (ve dolayısıyla aynı point
+  ID'leri) üretir; ikinci dosyanın `source_filename` payload'ı öncekinin
+  üzerine yazılır. Bu, içerik-adresli bir dedup olarak kabul edildi, hata
+  değil — ama ileride birden fazla dosya adının aynı içeriğe işaret ettiği
+  senaryo netleştirilmek istenirse burası revize edilmeli.
+
+Doğrulama: gerçek native Ollama + gerçek docker-compose Qdrant'a karşı hem
+otomatik bir testle (`tests/test_ingest_e2e.py`, servisler kapalıyken
+otomatik atlanıyor) hem de `make ingest PATH_ARG=...` ile manuel olarak — bir
+örnek PDF ingest edildi, Qdrant'taki point sayısı chunk sayısıyla birebir
+eşleşti, aynı klasör tekrar ingest edildiğinde point sayısı değişmedi. Payload
+şeması (`doc_id, page_number, paragraph_index, char_range, text,
+source_filename`) `curl` ile manuel doğrulandı.
+
+28 test yeşil (bu sprint'te 12 yeni test eklendi:
+`test_ollama_client.py::test_embed_*`, `test_qdrant_store.py`,
+`test_ingest.py`, `test_ingest_e2e.py`), `ruff check` temiz.
+
+Sıradaki: Sprint 3 — Hybrid Search (Native Qdrant). Sorgu tarafında
+`"search_query: "` prefix'ini uygulamayı unutma.
+
 ## Sprint 3 — Hybrid Search (Native Qdrant)
 
 Amaç: Dense + sparse vektörleri Qdrant içinde birleştirip tek bir hybrid retrieval sağlamak.

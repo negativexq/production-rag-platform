@@ -20,6 +20,18 @@ class OllamaClient:
         data = response.json()
         return [model["name"] for model in data.get("models", [])]
 
+    async def embed(self, text: str, model: str, prefix: str = "") -> list[float]:
+        try:
+            response = await self._client.post(
+                "/api/embeddings",
+                json={"model": model, "prompt": f"{prefix}{text}"},
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise OllamaUnreachableError(f"Could not reach Ollama: {exc}") from exc
+
+        return response.json()["embedding"]
+
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()

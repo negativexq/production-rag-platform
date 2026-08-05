@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     ollama_embed_model: str = "nomic-embed-text"
 
     qdrant_url: str = "http://localhost:6333"
+    qdrant_collection_name: str = "rag_chunks"
 
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
 
