@@ -13,5 +13,7 @@ class Settings(BaseSettings):
 
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
 
+    active_prompt_version: str = "v1"
+
 
 settings = Settings()

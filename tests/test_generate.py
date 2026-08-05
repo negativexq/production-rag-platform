@@ -23,12 +23,31 @@ class _FakeOllama:
             yield token
 
 
+async def _collect(query, chunks, ollama, model="qwen", prompt_version="v1"):
+    return [
+        event
+        async for event in stream_answer(
+            query, chunks, ollama, model=model, prompt_version=prompt_version
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_first_event_is_metadata_with_prompt_version():
+    chunks = [_chunk(2, 0, "Refunds take 30 days.")]
+    ollama = _FakeOllama(["ok"])
+
+    events = await _collect("How long?", chunks, ollama, prompt_version="v2")
+
+    assert events[0] == {"type": "metadata", "prompt_version": "v2"}
+
+
 @pytest.mark.asyncio
 async def test_stream_answer_yields_token_events_in_order():
     chunks = [_chunk(2, 0, "Refunds take 30 days.")]
     ollama = _FakeOllama(["Refunds ", "take ", "30 days ", "[s.2/0]."])
 
-    events = [event async for event in stream_answer("How long?", chunks, ollama, model="qwen")]
+    events = await _collect("How long?", chunks, ollama)
 
     token_events = [e for e in events if e["type"] == "token"]
     assert [e["content"] for e in token_events] == ["Refunds ", "take ", "30 days ", "[s.2/0]."]
@@ -39,7 +58,7 @@ async def test_stream_answer_emits_grounding_event_last():
     chunks = [_chunk(2, 0, "Refunds take 30 days.")]
     ollama = _FakeOllama(["Refunds take 30 days [s.2/0]."])
 
-    events = [event async for event in stream_answer("How long?", chunks, ollama, model="qwen")]
+    events = await _collect("How long?", chunks, ollama)
 
     assert events[-1]["type"] == "grounding"
     assert events[-1]["grounded"] is True
@@ -51,7 +70,7 @@ async def test_stream_answer_grounding_event_flags_fabricated_citation():
     chunks = [_chunk(2, 0, "Refunds take 30 days.")]
     ollama = _FakeOllama(["Refunds take 30 days [s.99/0]."])  # 99 was never in context
 
-    events = [event async for event in stream_answer("How long?", chunks, ollama, model="qwen")]
+    events = await _collect("How long?", chunks, ollama)
 
     grounding_event = events[-1]
     assert grounding_event["grounded"] is False
@@ -63,10 +82,21 @@ async def test_stream_answer_passes_built_messages_to_ollama():
     chunks = [_chunk(2, 0, "Refunds take 30 days.")]
     ollama = _FakeOllama(["ok"])
 
-    async for _ in stream_answer("How long?", chunks, ollama, model="qwen"):
-        pass
+    await _collect("How long?", chunks, ollama, model="qwen")
 
     roles = [m["role"] for m in ollama.received_messages]
     assert roles == ["system", "user"]
     assert "How long?" in ollama.received_messages[1]["content"]
     assert ollama.received_model == "qwen"
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_uses_requested_prompt_version_content():
+    from app.llm.prompt import load_system_prompt
+
+    chunks = [_chunk(2, 0, "Refunds take 30 days.")]
+    ollama = _FakeOllama(["ok"])
+
+    await _collect("How long?", chunks, ollama, prompt_version="v2")
+
+    assert ollama.received_messages[0]["content"] == load_system_prompt("v2")

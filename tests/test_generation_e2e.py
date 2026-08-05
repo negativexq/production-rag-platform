@@ -50,6 +50,7 @@ async def test_answer_streams_as_multiple_incremental_events_not_one_blob():
             CONTEXT_CHUNKS,
             ollama,
             model=settings.ollama_model,
+            prompt_version=settings.active_prompt_version,
         ):
             if event["type"] == "token":
                 arrival_times.append(time.monotonic())
@@ -75,10 +76,11 @@ async def test_answer_citations_are_grounded_in_real_context():
             CONTEXT_CHUNKS,
             ollama,
             model=settings.ollama_model,
+            prompt_version=settings.active_prompt_version,
         ):
             if event["type"] == "token":
                 answer_parts.append(event["content"])
-            else:
+            elif event["type"] == "grounding":
                 grounding_event = event
 
         answer = "".join(answer_parts)
@@ -102,6 +104,7 @@ async def test_out_of_context_question_gets_not_found_reply_not_a_hallucination(
             CONTEXT_CHUNKS,
             ollama,
             model=settings.ollama_model,
+            prompt_version=settings.active_prompt_version,
         ):
             if event["type"] == "token":
                 answer_parts.append(event["content"])

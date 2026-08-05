@@ -1,4 +1,6 @@
-from app.llm.prompt import NOT_FOUND_PHRASE, build_context, build_messages
+import pytest
+
+from app.llm.prompt import NOT_FOUND_PHRASE, build_context, build_messages, load_system_prompt
 from app.retrieval.hybrid_search import SearchResult
 
 
@@ -29,7 +31,7 @@ def test_build_context_empty_chunks_produces_empty_string():
 def test_build_messages_includes_system_and_user_roles():
     chunks = [_result(1, 0, "Some context.")]
 
-    messages = build_messages("What is this about?", chunks)
+    messages = build_messages("What is this about?", chunks, version="v1")
 
     roles = [m["role"] for m in messages]
     assert roles == ["system", "user"]
@@ -37,9 +39,49 @@ def test_build_messages_includes_system_and_user_roles():
     assert "Some context." in messages[1]["content"]
 
 
-def test_build_messages_system_prompt_mentions_citation_format_and_not_found_phrase():
-    messages = build_messages("question", [_result(1, 0, "text")])
+def test_build_messages_v1_system_prompt_mentions_citation_format_and_not_found_phrase():
+    messages = build_messages("question", [_result(1, 0, "text")], version="v1")
 
     system_content = messages[0]["content"]
     assert "[s." in system_content
     assert NOT_FOUND_PHRASE in system_content
+
+
+def test_load_system_prompt_v1_preserves_sprint6_fixes():
+    # Regression guard: these exact instructions were added in Sprint 6 after
+    # the model failed to follow the citation format without them (see
+    # docs/PLANNING.md Sprint 6 closing note). Moving the prompt to a file
+    # must not silently drop them.
+    prompt = load_system_prompt("v1")
+
+    assert "CITATION RULE" in prompt
+    assert '"[Kaynak: Sayfa 3, Paragraf 0]"' in prompt
+    assert "Do not write" in prompt and "Kaynak" in prompt
+    assert NOT_FOUND_PHRASE in prompt
+
+
+def test_load_system_prompt_v2_is_a_genuinely_different_shorter_variant():
+    v1 = load_system_prompt("v1")
+    v2 = load_system_prompt("v2")
+
+    assert v1 != v2
+    assert len(v2) < len(v1)
+    # v2 deliberately omits the explicit worked example from v1
+    assert "[Kaynak: Sayfa 3, Paragraf 0]" not in v2
+    assert NOT_FOUND_PHRASE in v2
+
+
+def test_load_system_prompt_unknown_version_raises():
+    with pytest.raises(FileNotFoundError):
+        load_system_prompt("v99")
+
+
+def test_build_messages_uses_the_requested_version():
+    chunks = [_result(1, 0, "text")]
+
+    v1_messages = build_messages("question", chunks, version="v1")
+    v2_messages = build_messages("question", chunks, version="v2")
+
+    assert v1_messages[0]["content"] == load_system_prompt("v1")
+    assert v2_messages[0]["content"] == load_system_prompt("v2")
+    assert v1_messages[0]["content"] != v2_messages[0]["content"]

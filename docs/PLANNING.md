@@ -478,6 +478,59 @@ Açık sorular:
 
 Definition of Done: Aktif prompt versiyonu tek bir config değişikliğiyle değiştirilebiliyor, her response'ta kullanılan versiyon net şekilde görülebiliyor.
 
+### Kapanış Notu (2026-08-06)
+
+Sprint 7 tamamlandı, DoD karşılandı. Açık soru karara bağlandı:
+
+- **Sprint 9 A/B karşılaştırması bunu nasıl kullanacak**: `search()`/
+  `stream_answer()` versiyonu **parametre olarak** aldığı için (config'i
+  kendi içinde okumuyor), Sprint 9'un evaluation harness'ı aynı golden
+  soru setini `prompt_version="v1"` ve `prompt_version="v2"` ile art arda
+  çalıştırıp RAGAS/DeepEval metriklerini yan yana karşılaştırabilecek —
+  kod değişikliği ya da ayrı bir "A/B modu" gerekmiyor, sadece parametreyi
+  değiştirmek yeterli. Ayrı bir A/B altyapısı kurulmadı, çünkü mevcut
+  tasarım zaten bunu destekliyor.
+- **Versiyon seçimi nerede**: `app/shared/config.py:active_prompt_version`
+  (env: `ACTIVE_PROMPT_VERSION`) — sadece `app/api/chat.py`'de okunuyor,
+  `build_messages`/`stream_answer` saf fonksiyonlar olarak kalıyor (config'e
+  gizli bağımlılıkları yok, test edilmesi kolay).
+- **Versiyonun görünürlüğü**: stream'in **ilk** event'i olarak
+  `{"type": "metadata", "prompt_version": "..."}` gönderiliyor (token'lardan
+  önce) — grounding event'inin sonuna eklemek yerine bu tercih edildi çünkü
+  istemci hangi versiyonun cevap verdiğini stream bitmeden bilebiliyor, ve
+  generation ortada hata verip kesilse bile versiyon bilgisi zaten gönderilmiş
+  oluyor.
+
+**Taşıma doğrulandı**: Sprint 6'da gerçek modelle sabitlenmiş prompt
+(`CITATION RULE`, açık örnek, "Kaynak/Sayfa/Paragraf kelimelerini kullanma"
+talimatı) `prompts/answer_v1.txt`'e birebir taşındı —
+`test_load_system_prompt_v1_preserves_sprint6_fixes` bunu garanti ediyor.
+Sprint 6'nın tüm testleri (`test_generation_e2e.py` dahil, gerçek Ollama'ya
+karşı) refactor sonrası hiç değişiklik yapılmadan (sadece `prompt_version`
+parametresi eklenerek) geçmeye devam etti — regresyon yok.
+
+**Somut kanıt (`scripts/demo_prompt_versions.py` ve ek bir prob script'i,
+gerçek Ollama'ya karşı)**: Aynı soru + aynı context'e v1 ve v2 ile ayrı ayrı
+cevap üretildi. Tek-chunk'lı basit soruda ikisi de doğru `[s.PAGE/PARAGRAPH]`
+formatını kullandı ama **farklı davrandı**: v1 citation'ı cümleden önce
+koydu, context'i neredeyse birebir yansıttı; v2 citation'ı cümleden sonra
+koydu, kendi cümleleriyle parafraz etti — metadata event'i de doğru şekilde
+`prompt_version` farkını yansıttı. Daha zorlu, çok chunk'lı bir soruda
+(printer troubleshooting, 2 chunk) **beklenmedik ama dürüst bir bulgu**: v1
+iki denemeden birinde tutarsız bir çıktı üretti — soruya cevap context'te
+açıkça varken "I could not find this in the document. [s.4/2]" dedi (hem
+yanlış "bulunamadı" hem de gereksiz bir citation, kendi kuralıyla çelişen bir
+çıktı), v2 ise iki denemede de tutarlı ve doğru, tam grounded cevaplar verdi.
+Bu, "v1 daha detaylı olduğu için her zaman daha güvenilir" varsayımının
+genellenemeyeceğini gösteren gerçek, ölçülmüş bir fark — versiyonlar arası
+davranış gerçekten farklı, iddia değil.
+
+77 test yeşil (13 yeni/değişen: `test_config.py`, `test_prompt.py`'a
+versiyon testleri, `test_generate.py`'a metadata event testi), `ruff check`
+temiz.
+
+Sıradaki: Sprint 8 — OpenTelemetry Tracing.
+
 ## Sprint 8 — OpenTelemetry Tracing
 
 Amaç: Pipeline'ın her adımını uçtan uca izlenebilir kılmak.

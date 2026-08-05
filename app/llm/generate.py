@@ -15,18 +15,25 @@ async def stream_answer(
     chunks: list[SearchResult],
     ollama: StreamingOllamaProtocol,
     model: str,
+    prompt_version: str,
 ) -> AsyncIterator[dict]:
     """Stream a grounded answer as a sequence of events:
-    {"type": "token", "content": str} for each generated token, followed by
-    exactly one {"type": "grounding", "grounded": bool, "citations_found":
-    [...], "ungrounded_citations": [...]} once generation completes.
+    {"type": "metadata", "prompt_version": str} first (so the caller knows
+    which prompt answered before a single token arrives — see
+    docs/PLANNING.md Sprint 7 closing note for why this goes first rather
+    than at the end), then {"type": "token", "content": str} for each
+    generated token, then exactly one {"type": "grounding", "grounded":
+    bool, "citations_found": [...], "ungrounded_citations": [...]} once
+    generation completes.
 
     The grounding check is post-hoc by design — it can only run after the
     full answer (with its citations) exists, by which point the tokens have
     already been streamed. See docs/PLANNING.md Sprint 6 closing note for
     why a failed check warns instead of blocking.
     """
-    messages = build_messages(query, chunks)
+    yield {"type": "metadata", "prompt_version": prompt_version}
+
+    messages = build_messages(query, chunks, version=prompt_version)
     answer_parts = []
 
     async for token in ollama.stream_chat(messages, model=model):

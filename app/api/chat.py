@@ -59,12 +59,21 @@ async def _sse_event_stream(question: str):
             embed_model=settings.ollama_embed_model,
             reranker=_get_reranker(),
         )
-        async for event in stream_answer(question, chunks, ollama, model=settings.ollama_model):
+        async for event in stream_answer(
+            question,
+            chunks,
+            ollama,
+            model=settings.ollama_model,
+            prompt_version=settings.active_prompt_version,
+        ):
             if event["type"] == "token":
                 yield f"data: {json.dumps({'token': event['content']})}\n\n"
+            elif event["type"] == "metadata":
+                payload = {k: v for k, v in event.items() if k != "type"}
+                yield f"event: metadata\ndata: {json.dumps(payload)}\n\n"
             else:
-                grounding_payload = {k: v for k, v in event.items() if k != "type"}
-                yield f"event: grounding\ndata: {json.dumps(grounding_payload)}\n\n"
+                payload = {k: v for k, v in event.items() if k != "type"}
+                yield f"event: grounding\ndata: {json.dumps(payload)}\n\n"
     finally:
         await ollama.aclose()
 
