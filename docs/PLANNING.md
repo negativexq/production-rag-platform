@@ -410,6 +410,58 @@ Açık sorular:
 
 Definition of Done: Streaming cevap gerçek zamanlı akıyor, her cevap doğrulanmış sayfa/paragraf referansı içeriyor, context dışı sorularda uydurma yapmıyor.
 
+### Kapanış Notu (2026-08-06)
+
+Sprint 6 tamamlandı, DoD karşılandı. Açık soru karara bağlandı:
+
+- **Grounding check başarısız olursa — KARAR: cevap reddedilmiyor, uyarı
+  olarak işaretleniyor.** Gerekçe: kontrol post-hoc (planın kendisinde de
+  böyle tanımlı) — citation'lar cevabın *içinde*, dolayısıyla generation
+  tamamlanmadan kontrol edilemez; o noktada token'lar zaten kullanıcıya
+  stream edilmiş oluyor. "Reddetmek" ancak yeniden üretim (regenerate)
+  gerektirir, bu sprint'in kapsamında yok. Bunun yerine stream'in sonunda
+  ayrı bir SSE event'i (`event: grounding`) ile `{grounded, citations_found,
+  ungrounded_citations}` gönderiliyor — istemci bunu bir uyarı olarak
+  gösterebilir. Regenerate-on-failure ileride ayrı bir mini-sprint olarak
+  değerlendirilebilir.
+- **Prompt versiyonu**: tek bir sabit `SYSTEM_PROMPT_V1`
+  (`app/llm/prompt.py`) — Sprint 7'de dosya-tabanlı versiyonlamaya taşınacak.
+
+**Beklenmeyen bulgu — ilk prompt taslağı citation formatını takip ettirmedi**:
+İlk yazılan prompt ("every claim must be followed by [s.page/paragraph]")
+gerçek `qwen2.5:3b-instruct` ile test edildiğinde model context etiketini
+(`[Kaynak: Sayfa 2, Paragraf 0]`) olduğu gibi (hatta yanlış yazarak,
+"Kayfan") kopyaladı — istenen kısa `[s.2/0]` formatını hiç kullanmadı,
+`check_grounding` da citation bulamadı (`citations_found=[]`). Gerçek model
+çıktısıyla test edilmeseydi bu sessizce geçerdi (grounding "boş citation =
+grounded" kuralı yüzünden yanlışlıkla "başarılı" görünürdü). Prompt, açık
+bir örnek (`"[Kaynak: Sayfa 3, Paragraf 0]" için [s.3/0] yaz`) ve "Kaynak/
+Sayfa/Paragraf kelimelerini kullanma" talimatıyla güçlendirildi — 3 farklı
+gerçek senaryoda (tek chunk, çoklu chunk, context-dışı soru) tutarlı şekilde
+doğru format ve doğru "bulunamadı" davranışı üretti. Bu, 3B gibi küçük bir
+modelin format talimatlarını gerçek veriyle doğrulamadan güvenilir
+sayılamayacağının somut bir kanıtı.
+
+**Somut kanıt**:
+- Streaming: `tests/test_generation_e2e.py` gerçek Ollama'ya karşı, token
+  varış zamanlarını ölçüp aralarında >50ms fark olduğunu doğruluyor —
+  tamamı aynı anda gelen "sahte stream" değil, gerçek token-token akış.
+  `curl -N /chat` ile manuel doğrulandı, SSE `data:` satırları tek tek geldi.
+- Grounding: context'te sadece (sayfa 2, paragraf 0) varken cevapta
+  kasıtlı olarak `[s.99/0]` (uydurma) geçirilen test, `grounded=False` ve
+  `ungrounded_citations=[(99,0)]` ile başarısız olarak yakalandı
+  (`tests/test_grounding.py`).
+- Context dışı soru ("What is the capital of France?", context iade
+  politikasıyla ilgili): model gerçek Ollama ile tam olarak
+  `"I could not find this in the document."` cevabını verdi — uydurma
+  yapmadı, hem otomatik testte hem `curl` ile manuel doğrulandı.
+
+69 test yeşil (14 yeni: `test_prompt.py`, `test_grounding.py`,
+`test_ollama_client.py`'a stream_chat testleri, `test_generate.py`,
+`test_generation_e2e.py`), `ruff check` temiz.
+
+Sıradaki: Sprint 7 — Prompt Versioning.
+
 ## Sprint 7 — Prompt Versioning
 
 Amaç: Prompt'ları kod değişikliği gerektirmeden versiyonlayıp, hangi versiyonun kullanıldığını izlenebilir kılmak.

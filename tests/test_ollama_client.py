@@ -65,3 +65,45 @@ async def test_embed_raises_when_unreachable():
 
     with pytest.raises(OllamaUnreachableError):
         await client.embed("hello world", model="nomic-embed-text", prefix="search_document: ")
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_yields_content_tokens_in_order():
+    ndjson = "\n".join(
+        [
+            json.dumps({"message": {"role": "assistant", "content": "Hello"}, "done": False}),
+            json.dumps({"message": {"role": "assistant", "content": " there"}, "done": False}),
+            json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}),
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/chat"
+        body = json.loads(request.content)
+        assert body["stream"] is True
+        assert body["model"] == "qwen2.5:3b-instruct"
+        return httpx.Response(200, content=ndjson)
+
+    client = OllamaClient(http_client=_mock_client(handler))
+    tokens = [
+        token
+        async for token in client.stream_chat(
+            [{"role": "user", "content": "hi"}], model="qwen2.5:3b-instruct"
+        )
+    ]
+
+    assert tokens == ["Hello", " there"]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_raises_when_unreachable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    client = OllamaClient(http_client=_mock_client(handler))
+
+    with pytest.raises(OllamaUnreachableError):
+        async for _ in client.stream_chat(
+            [{"role": "user", "content": "hi"}], model="qwen2.5:3b-instruct"
+        ):
+            pass
