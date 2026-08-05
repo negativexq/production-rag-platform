@@ -5,7 +5,8 @@ import app.retrieval.search as search_module
 from app.ingestion.models import Chunk
 from app.ingestion.qdrant_store import QdrantStore
 from app.retrieval.filters import build_filter
-from app.retrieval.search import SEARCH_QUERY_PREFIX, search
+from app.retrieval.hybrid_search import SearchResult
+from app.retrieval.search import RERANK_CANDIDATE_K, SEARCH_QUERY_PREFIX, search
 from app.retrieval.sparse import SparseVector
 
 COLLECTION = "test_search"
@@ -116,3 +117,95 @@ async def test_search_builds_and_passes_filter_from_doc_ids(monkeypatch):
     )
 
     assert captured["filters"] == build_filter(doc_ids=["doc-a", "doc-b"])
+
+
+class _FakeReranker:
+    def __init__(self):
+        self.calls = []
+
+    def rerank(self, query, candidates, top_n):
+        self.calls.append({"query": query, "candidates": candidates, "top_n": top_n})
+        # deterministic "rerank": reverse the candidate order
+        return list(reversed(candidates))[:top_n]
+
+
+@pytest.mark.asyncio
+async def test_search_uses_reranker_when_provided(monkeypatch):
+    client = QdrantClient(":memory:")
+    hybrid_candidates = [
+        SearchResult(score=0.9, payload={"text": "first"}),
+        SearchResult(score=0.5, payload={"text": "second"}),
+    ]
+
+    def fake_hybrid_search(client_, collection_name, dense_vector, sparse_vector, **kwargs):
+        return hybrid_candidates
+
+    monkeypatch.setattr(search_module, "hybrid_search", fake_hybrid_search)
+    reranker = _FakeReranker()
+
+    results = await search(
+        "hello",
+        ollama=_FakeOllama(),
+        sparse_encoder=_FakeSparseEncoder(),
+        qdrant_client=client,
+        collection_name=COLLECTION,
+        embed_model="nomic-embed-text",
+        reranker=reranker,
+        top_n=2,
+    )
+
+    assert reranker.calls[0]["query"] == "hello"
+    assert reranker.calls[0]["candidates"] == hybrid_candidates
+    assert reranker.calls[0]["top_n"] == 2
+    assert [r.payload["text"] for r in results] == ["second", "first"]
+
+
+@pytest.mark.asyncio
+async def test_search_fetches_rerank_candidate_k_from_hybrid_search_by_default(monkeypatch):
+    client = QdrantClient(":memory:")
+    captured = {}
+
+    def fake_hybrid_search(client_, collection_name, dense_vector, sparse_vector, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(search_module, "hybrid_search", fake_hybrid_search)
+
+    await search(
+        "hello",
+        ollama=_FakeOllama(),
+        sparse_encoder=_FakeSparseEncoder(),
+        qdrant_client=client,
+        collection_name=COLLECTION,
+        embed_model="nomic-embed-text",
+        reranker=_FakeReranker(),
+    )
+
+    assert captured["top_k"] == RERANK_CANDIDATE_K
+
+
+@pytest.mark.asyncio
+async def test_search_without_reranker_falls_back_to_hybrid_order_truncated_to_top_n(monkeypatch):
+    client = QdrantClient(":memory:")
+    hybrid_candidates = [
+        SearchResult(score=0.9, payload={"text": "first"}),
+        SearchResult(score=0.5, payload={"text": "second"}),
+        SearchResult(score=0.1, payload={"text": "third"}),
+    ]
+
+    def fake_hybrid_search(client_, collection_name, dense_vector, sparse_vector, **kwargs):
+        return hybrid_candidates
+
+    monkeypatch.setattr(search_module, "hybrid_search", fake_hybrid_search)
+
+    results = await search(
+        "hello",
+        ollama=_FakeOllama(),
+        sparse_encoder=_FakeSparseEncoder(),
+        qdrant_client=client,
+        collection_name=COLLECTION,
+        embed_model="nomic-embed-text",
+        top_n=2,
+    )
+
+    assert [r.payload["text"] for r in results] == ["first", "second"]

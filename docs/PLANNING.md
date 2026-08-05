@@ -353,6 +353,46 @@ Açık sorular:
 
 Definition of Done: Rerank sonrası top-n sonuçların, rerank öncesine göre daha alakalı olduğu somut örneklerle gösterilmiş.
 
+### Kapanış Notu (2026-08-06)
+
+Sprint 5 tamamlandı, DoD karşılandı.
+
+- **Model**: `cross-encoder/ms-marco-MiniLM-L-6-v2` — planda önerilen model
+  aynen kullanıldı, alternatif aramaya gerek kalmadı.
+- **Gerçek latency ölçümü (varsayılmadı)**: M2 CPU'da, gerçek chunk boyutunda
+  top-20 aday skorlandı. Model yükleme ~9s (process başına bir kerelik,
+  cache'den), skorlama ısındıktan sonra top-20 için **~60ms** (2.8ms/çift).
+  Sprint 3'teki SPLADE deneyiminin (~134ms/chunk, kabul edilemez) aksine, bu
+  sefer eklenen gecikme kullanıcı sorgusu başına kabul edilebilir düzeyde —
+  alternatif bir modele geçmeye gerek yok.
+- **k=20, n=5 — HÂLÂ GEÇİCİ**: `app/retrieval/search.py:RERANK_CANDIDATE_K=20`,
+  `RERANK_TOP_N=5`. Sprint 1'in chunk boyutu kararı gibi, bunlar da Sprint
+  9'un (RAGAS/DeepEval evaluation) gerçek metriklerine göre kesinleşecek bir
+  başlangıç varsayımı — kod içinde bu şekilde işaretlendi.
+- **search.py entegrasyonu**: `reranker` parametresi opsiyonel — verilirse
+  hybrid'in top-k'sı rerank edilip top-n'e daraltılıyor; verilmezse hybrid'in
+  RRF sıralaması ilk `top_n` ile kesiliyor. Bu, Sprint 9'da rerank'li/rerank'siz
+  A/B karşılaştırmasını kolaylaştırmak için bilinçli bir tasarım.
+
+**Somut kanıt (`scripts/demo_rerank.py`, gerçek Ollama + gerçek Qdrant + gerçek
+CrossEncoder)**: Sorgu "What is the return policy for a defective product?".
+Bir chunk yalnızca ürün özelliklerini "product" kelimesini 6 kez tekrarlayarak
+listeliyor (alakasız); diğeri gerçek iade politikasını anlatıyor (alakalı,
+ama "product" kelimesini hiç geçmiyor). Hybrid (RRF) fusion, BM25'in kelime
+tekrarına aşırı ağırlık vermesi yüzünden **alakasız chunk'ı top-1 yapıyor**
+(`score=0.8333`, alakalı chunk `score=0.5000` ile 2.). CrossEncoder rerank
+bunu tersine çeviriyor: alakalı chunk `score=0.4055` (pozitif, alakalı) ile
+1., alakasız chunk `score=-11.0160` (çok negatif, alakasız) ile 2. sıraya
+düşüyor. Bu, iddia değil, gerçek ölçülmüş bir skor farkı — ve ayrıca RRF
+fusion'ın kelime-tekrarı gibi basit bir saldırıya (keyword stuffing) karşı
+savunmasız olduğunu, rerank adımının bunun için tam olarak gerekli olduğunu
+somut olarak gösteriyor.
+
+52 test yeşil (6 yeni: `test_reranker.py`, `test_search.py`'a rerank
+entegrasyon testleri), `ruff check` temiz.
+
+Sıradaki: Sprint 6 — Grounded Generation + Streaming + Citations.
+
 ## Sprint 6 — Grounded Generation + Streaming + Citations
 
 Amaç: Reranked context'i kullanarak, sayfa/paragraf referanslı, streaming bir cevap üretmek.
