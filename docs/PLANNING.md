@@ -206,6 +206,71 @@ Açık sorular:
 
 Definition of Done: Aynı sorgu için hybrid sonuçların, sadece-dense sonuçlardan gözle görülür şekilde farklı/daha iyi olduğu somut örneklerle gösterilmiş.
 
+### Kapanış Notu (2026-08-06)
+
+Sprint 3 tamamlandı, DoD karşılandı. Açık sorular karara bağlandı:
+
+- **Sparse model seçimi: `Qdrant/bm25` (FastEmbed), SPLADE değil.** M2 CPU'da
+  gerçek chunk boyutunda ölçüldü: SPLADE++ (`prithivida/Splade_PP_en_v1`)
+  ~134ms/chunk, `Qdrant/bm25` ~0.1ms/chunk — 1000x'ten fazla fark, 1000
+  chunk'lık bir ingestion'da SPLADE +2 dakikadan fazla ekliyor. Bu "gözle
+  görülür ve kabul edilemez" eşiğini net şekilde aşıyor, planın öngördüğü
+  gibi TF-IDF/BM25 tabanlı alternatife geçildi. `Qdrant/bm25` ayrıca Qdrant'ın
+  native `modifier="idf"` sparse index özelliğiyle özel tasarlanmış — IDF
+  hesaplaması Qdrant tarafında, corpus'u client'ta fit etmeye gerek yok
+  (`fastembed/sparse/bm25.py` kaynağı incelenerek doğrulandı).
+- **Fusion**: Qdrant Query API'nin native `FusionQuery(fusion=Fusion.RRF)`'i,
+  dense ve sparse'tan `prefetch_limit=20` ile ayrı top-20 aday çekip RRF ile
+  birleştiriyor. Ayrı bir ağırlıklandırma (dense/sparse oranı) parametresi
+  **eklenmedi** — RRF zaten skor ölçeğinden bağımsız, rank-tabanlı bir
+  yöntem; ileride gerçek kullanıcı sorgularıyla kalibrasyon gerekirse
+  Qdrant'ın `Prefetch` limitleri veya `Fusion.DBSF` gibi alternatifler
+  değerlendirilebilir.
+- **Query prefix**: Sprint 2'nin bıraktığı uyarı uygulandı —
+  `app/retrieval/search.py:SEARCH_QUERY_PREFIX = "search_query: "` artık
+  dense query embedding'ine ekleniyor; ingestion tarafı (`"search_document:
+  "`) değişmedi.
+- **Migration**: Qdrant var olan bir collection'a sonradan named vector
+  ekleyemiyor. `QdrantStore.ensure_collection()` bu yüzden sparse vector'ü
+  eksik bir collection'ı **drop edip yeniden oluşturuyor** — dev ortamı için
+  kabul edilebilir (koleksiyon boştu), ama gerçek veri olan bir prod
+  ortamında bu aynı şekilde uygulanmamalı; orada scroll+reindex+alias-swap
+  gerekir. Bu, kod içinde yorumla da belirtildi.
+
+**Beklenmeyen bulgu 1 — `qdrant-client`'ın `:memory:` modunda bug**: Sparse
+vector + `modifier=IDF` olan tamamen boş bir collection'a karşı
+`query_points` çağrısı local (in-memory) modda `KeyError: 'sparse'`
+fırlatıyor (`local_collection.py:_rescore_idf`). Gerçek Qdrant sunucusuna
+karşı aynı senaryo sorunsuz boş sonuç döndürüyor — doğrulandı. Bu sadece
+local test modunun bir kısıtlaması; testler en az bir point upsert edildikten
+sonra sorgu yaparak bu bug'ı bypass ediyor (`tests/test_search.py`'de
+yorumla belgelendi).
+
+**Beklenmeyen bulgu 2 — nomic-embed-text, exact-match sorgularında beklenenden
+çok daha sağlam**: DoD'nin istediği "hybrid'in bulduğu ama dense'in kaçırdığı
+somut bir örnek"i gerçek embeddinglerle üretmeye çalışırken, 14 farklı
+adversarial senaryo denendi (nadir kodlar, birbirine çok yakın ID'ler —
+REF-99182 vs REF-99183 gibi —, kısa/bağlamsız sorgular, uydurma teknik
+jargon, gerçekçi PDF gürültüsü eklenmiş chunk'lar). **Hiçbirinde dense-only
+yanlış chunk'ı üste çıkarmadı** — `nomic-embed-text` alt-kelime (subword)
+tokenizasyonu sayesinde nadir/tam eşleşen terimleri bekleneden çok daha
+sağlam yakalıyor. Yakın-ID senaryosunda skor farkı daralıyor (0.7395 vs
+0.6942) ama sıralama bozulmuyor. Bu, "dense embedding'ler exact-match'te
+zayıftır" genel varsayımının bu model için doğrulanmadığı, ileride fusion
+ağırlıklarını ayarlarken hatırlanması gereken değerli bir bulgu.
+Somut kanıt: `scripts/demo_hybrid_vs_dense.py` — Part 1 gerçek embeddinglerle
+bu dürüst sonucu raporluyor; Part 2 (ve `tests/test_hybrid_search.py`)
+kontrollü/deterministic vektörlerle fusion mekanizmasının kendisini
+kanıtlıyor: sorguya ortogonal dense vektörü olan ama nadir bir anahtar
+kelimeyi paylaşan bir chunk, dense-only'de son sırada (`score=0.0`) kalırken,
+hybrid'de ilk sıraya çıkıyor (`score=0.83`) — DoD'nin istediği somut örnek.
+
+40 test yeşil (12 yeni: `test_sparse.py`, `test_hybrid_search.py`,
+`test_search.py`, `test_qdrant_store.py`/`test_ingest.py`'a sparse
+eklentileri), `ruff check` temiz.
+
+Sıradaki: Sprint 4 — Metadata Filtering.
+
 ## Sprint 4 — Metadata Filtering
 
 Amaç: Hybrid search'e payload bazlı filtreleme eklemek (enterprise senaryosu: "sadece 2024 sonrası dokümanlarda ara" gibi).

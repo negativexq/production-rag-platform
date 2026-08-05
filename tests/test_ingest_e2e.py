@@ -15,6 +15,7 @@ from app.ingestion.chunker import chunk_document
 from app.ingestion.ingest import SEARCH_DOCUMENT_PREFIX, ingest_path
 from app.ingestion.qdrant_store import QdrantStore
 from app.llm.ollama_client import OllamaClient
+from app.retrieval.sparse import SparseEncoder
 from app.shared.config import settings
 
 COLLECTION = "test_ingest_e2e"
@@ -45,6 +46,7 @@ async def test_real_pdf_ingest_matches_chunk_count_and_is_idempotent(sample_pdf,
     ollama = OllamaClient(base_url=settings.ollama_base_url)
     qdrant_client = QdrantClient(url=settings.qdrant_url)
     store = QdrantStore(client=qdrant_client, collection_name=COLLECTION)
+    sparse_encoder = SparseEncoder()
 
     async def embed_fn(text: str) -> list[float]:
         return await ollama.embed(
@@ -52,11 +54,11 @@ async def test_real_pdf_ingest_matches_chunk_count_and_is_idempotent(sample_pdf,
         )
 
     try:
-        first = await ingest_path(str(docs_dir), store, embed_fn)
+        first = await ingest_path(str(docs_dir), store, embed_fn, sparse_encoder)
         assert first.chunks_upserted == len(expected_chunks)
         assert store.count() == len(expected_chunks)
 
-        second = await ingest_path(str(docs_dir), store, embed_fn)
+        second = await ingest_path(str(docs_dir), store, embed_fn, sparse_encoder)
         assert second.chunks_upserted == len(expected_chunks)
         assert store.count() == len(expected_chunks)  # no duplicates on re-ingest
     finally:

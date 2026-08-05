@@ -1,7 +1,9 @@
 from qdrant_client import QdrantClient
+from qdrant_client.http import models as qmodels
 
 from app.ingestion.models import Chunk
-from app.ingestion.qdrant_store import EMBEDDING_DIM, VECTOR_NAME, QdrantStore
+from app.ingestion.qdrant_store import EMBEDDING_DIM, SPARSE_VECTOR_NAME, VECTOR_NAME, QdrantStore
+from app.retrieval.sparse import SparseVector
 
 COLLECTION = "test_chunks"
 
@@ -23,8 +25,12 @@ def _chunk(doc_id="doc1", page=1, paragraph=0, char_range=(0, 10), text="hello w
     )
 
 
-def _vector(seed: float = 0.1) -> list[float]:
+def _dense_vector(seed: float = 0.1) -> list[float]:
     return [seed] * EMBEDDING_DIM
+
+
+def _sparse_vector() -> SparseVector:
+    return SparseVector(indices=[1, 2, 3], values=[0.5, 0.3, 0.9])
 
 
 def test_ensure_collection_creates_dense_cosine_vector_of_correct_size():
@@ -37,6 +43,15 @@ def test_ensure_collection_creates_dense_cosine_vector_of_correct_size():
     assert vector_params.distance.name == "COSINE"
 
 
+def test_ensure_collection_creates_sparse_vector_with_idf_modifier():
+    store = _store()
+
+    info = store._client.get_collection(COLLECTION)
+    sparse_params = info.config.params.sparse_vectors[SPARSE_VECTOR_NAME]
+
+    assert sparse_params.modifier == qmodels.Modifier.IDF
+
+
 def test_ensure_collection_is_idempotent():
     store = _store()
 
@@ -46,11 +61,27 @@ def test_ensure_collection_is_idempotent():
     assert store.count() == 0
 
 
+def test_ensure_collection_recreates_a_dense_only_collection_missing_sparse_vector():
+    client = QdrantClient(":memory:")
+    client.create_collection(
+        COLLECTION,
+        vectors_config={
+            VECTOR_NAME: qmodels.VectorParams(size=EMBEDDING_DIM, distance=qmodels.Distance.COSINE)
+        },
+    )
+
+    store = QdrantStore(client=client, collection_name=COLLECTION)
+    store.ensure_collection()
+
+    info = client.get_collection(COLLECTION)
+    assert SPARSE_VECTOR_NAME in info.config.params.sparse_vectors
+
+
 def test_upsert_chunks_writes_one_point_per_chunk_with_correct_payload():
     store = _store()
     chunk = _chunk()
 
-    store.upsert_chunks([chunk], [_vector()], source_filename="doc1.pdf")
+    store.upsert_chunks([chunk], [_dense_vector()], [_sparse_vector()], source_filename="doc1.pdf")
 
     assert store.count() == 1
     point = store._client.retrieve(COLLECTION, ids=[QdrantStore.point_id_for(chunk)])[0]
@@ -64,12 +95,29 @@ def test_upsert_chunks_writes_one_point_per_chunk_with_correct_payload():
     }
 
 
+def test_upsert_chunks_writes_both_dense_and_sparse_vectors():
+    store = _store()
+    chunk = _chunk()
+
+    store.upsert_chunks([chunk], [_dense_vector()], [_sparse_vector()], source_filename="doc1.pdf")
+
+    point = store._client.retrieve(
+        COLLECTION, ids=[QdrantStore.point_id_for(chunk)], with_vectors=True
+    )[0]
+    # Cosine-distance collections store L2-normalized vectors, so we only
+    # check direction (all components equal), not the exact raw magnitude.
+    stored_dense = point.vector[VECTOR_NAME]
+    assert len(stored_dense) == EMBEDDING_DIM
+    assert len(set(round(v, 6) for v in stored_dense)) == 1
+    assert list(point.vector[SPARSE_VECTOR_NAME].indices) == _sparse_vector().indices
+
+
 def test_upserting_the_same_chunk_twice_does_not_duplicate():
     store = _store()
     chunk = _chunk()
 
-    store.upsert_chunks([chunk], [_vector()], source_filename="doc1.pdf")
-    store.upsert_chunks([chunk], [_vector()], source_filename="doc1.pdf")
+    store.upsert_chunks([chunk], [_dense_vector()], [_sparse_vector()], source_filename="doc1.pdf")
+    store.upsert_chunks([chunk], [_dense_vector()], [_sparse_vector()], source_filename="doc1.pdf")
 
     assert store.count() == 1
 
