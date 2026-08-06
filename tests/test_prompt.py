@@ -55,7 +55,7 @@ def test_load_system_prompt_v1_preserves_sprint6_fixes():
     prompt = load_system_prompt("v1")
 
     assert "CITATION RULE" in prompt
-    assert '"[Kaynak: Sayfa 3, Paragraf 0]"' in prompt
+    assert '"[Kaynak: sample_doc, Sayfa 3, Paragraf 0]"' in prompt
     assert "Do not write" in prompt and "Kaynak" in prompt
     assert NOT_FOUND_PHRASE in prompt
 
@@ -67,7 +67,7 @@ def test_load_system_prompt_v2_is_a_genuinely_different_shorter_variant():
     assert v1 != v2
     assert len(v2) < len(v1)
     # v2 deliberately omits the explicit worked example from v1
-    assert "[Kaynak: Sayfa 3, Paragraf 0]" not in v2
+    assert "[Kaynak: sample_doc, Sayfa 3, Paragraf 0]" not in v2
     assert NOT_FOUND_PHRASE in v2
 
 

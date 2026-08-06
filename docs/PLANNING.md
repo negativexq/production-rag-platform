@@ -911,3 +911,59 @@ dışıydı — sadece görsel ayırt edilebilirlik (bold) yeterliydi.
 testi eklendi), `ruff check` temiz.
 
 Proje sprint 0'dan 11'e kadar plana göre tamamlandı.
+
+### Post-release bug fix: doküman kimliği olmayan citation/grounding
+
+**Gerçek kullanımda bulundu**: Sprint 11'in tarayıcı doğrulaması sırasında
+kullanıcı ayrıca kendi CV'sini yükledi (`OmerFaruKOC__CV.pdf`), aynı Qdrant
+koleksiyonuna `nimbus_handbook.pdf` (test fixture) ile birlikte girdi. "What
+programming languages does this person know" sorusuna verilen cevapta model
+`[s.2/0]`, `[s.3/0]`... gibi sürekli artan sayfa citation'ları üretti — ama
+CV tek sayfaydı (page 1); bu numaralar aslında **nimbus_handbook.pdf'in
+sayfalarına** aitti. Grounding check bazılarını (page/paragraph context'te
+hiç yoktu) doğru şekilde "ungrounded" işaretledi, ama en az birini (`s.2/0`)
+yanlışlıkla "grounded" saydı çünkü o koordinat gerçekten retrieved context'te
+vardı — sadece **başka bir dokümandan**.
+
+**Kök sebep**: `app/llm/grounding.py`'deki `check_grounding`, citation'ları
+`(page_number, paragraph_index)` çiftine göre doğruluyordu — hangi
+dokümandan geldiğine bakmıyordu. `SearchResult.payload`'da `doc_id` ve
+`source_filename` zaten vardı (Sprint 1'den beri), sadece hiç okunmuyordu.
+İki doküman aynı koleksiyonda aynı (sayfa, paragraf) koordinatını
+paylaşabildiği için (her PDF kendi sayfa 1'inden başlar), bu bir yanlış
+pozitif (false grounded) riskiydi.
+
+**Düzeltme**: Citation formatı `[s.PAGE/PARAGRAPH]`'tan `[s.DOC:PAGE/PARAGRAPH]`'a
+genişletildi — `DOC`, `source_filename`'in uzantısız, alfanümerik-güvenli
+kısa hâli (`app/llm/prompt.py:doc_label`). Bu fonksiyon hem context'i
+LLM'e sunan `build_context`'te (Kaynak etiketine doküman adı eklendi) hem de
+`grounding.py`'deki doğrulamada kullanılıyor — artık bir citation, SADECE
+aynı dokümandan aynı (sayfa, paragraf) çiftiyle eşleşirse "grounded"
+sayılıyor. `prompts/answer_v1.txt` ve `v2.txt` yeni format için güncellendi;
+`app/ui/citation_formatting.py`'nin regex'i de yeni formatı yakalayacak
+şekilde değiştirildi. Yeni bir regresyon testi eklendi
+(`test_grounding_rejects_citation_whose_page_paragraph_matches_a_different_document`)
+— iki farklı dokümanın aynı koordinatı paylaştığı, yanlış doküman etiketiyle
+citation verildiği senaryoyu doğrudan test ediyor.
+
+**Gerçekten doğrulandı**: Container yeniden build edilip (`docker compose
+build backend`) ayağa kaldırıldıktan sonra hem CV hem nimbus_handbook
+sorguları tekrar denendi — citation'lar artık her zaman doğru doküman adını
+taşıyor (`[s.OmerFaruKOC__CV:...]`, `[s.nimbus_handbook:...]`), önceki gibi
+yanlış dokümana sızma yok. **Ayrı ve bu fix'in kapsamı dışında kalan bir
+gözlem**: model (qwen2.5:7b-instruct) bazen doğru doküman içinde bile yanlış
+sayfa/paragraf numarası üretiyor — bu artık grounding tarafından daha
+tutarlı yakalanıyor (⚠️ uyarısı çıkıyor), ama modelin citation hassasiyeti
+ayrı, çözülmemiş bir sınırlama olarak kayda geçildi.
+
+**Yan bulgu — build altyapısı**: Bu fix'i container'a yansıtmak için
+`docker compose build backend` çalıştırılırken, `sentence-transformers`'ın
+transitive bağımlılığı olan `torch`'un manylinux aarch64'te varsayılan
+olarak **CUDA'lı build'i** (~2GB, `nvidia_cublas`, `nvidia_cudnn` vb. dahil)
+çektiği fark edildi — container'da hiç GPU yok (Ollama native, Sprint 10).
+`Dockerfile`'a `pip install torch --index-url .../whl/cpu` adımı eklenerek
+CPU-only torch zorlandı; sonraki `pip install -r requirements.txt` torch'u
+zaten karşılanmış görüp CUDA varyantını atladı. Rebuild süresi buna bağlı
+olarak dramatik kısaldı.
+
+121 test yeşil, `ruff check` temiz.

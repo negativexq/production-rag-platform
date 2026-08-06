@@ -1,10 +1,10 @@
 import re
 
-_CITATION_RE = re.compile(r"\[s\.\d+/\d+\]")
+_CITATION_RE = re.compile(r"\[s\.[\w\-]+:\d+/\d+\]")
 
 
 def highlight_citations(text: str) -> str:
-    """Wrap [s.page/paragraph] citation markers in bold Markdown so they
+    """Wrap [s.doc:page/paragraph] citation markers in bold Markdown so they
     stand out visually in the Streamlit chat, without needing them to be
     clickable. Also escapes bare `$` so Streamlit's markdown renderer
     doesn't mistake dollar amounts (e.g. "$2.99/month") for LaTeX math.

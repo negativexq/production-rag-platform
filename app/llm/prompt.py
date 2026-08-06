@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from app.retrieval.hybrid_search import SearchResult
@@ -13,11 +14,28 @@ def load_system_prompt(version: str) -> str:
     return path.read_text().format(not_found_phrase=NOT_FOUND_PHRASE)
 
 
+def doc_label(source_filename: str) -> str:
+    """Short, citation-tag-safe identifier for a source document, derived
+    from its filename (extension stripped, non-word characters collapsed).
+    Shared by build_context (what the LLM sees) and grounding.py (what a
+    citation is validated against) so a citation can be checked against the
+    SAME document it claims — two documents in one collection can otherwise
+    share (page, paragraph) coordinates. See docs/PLANNING.md Sprint 11
+    post-release bug fix note.
+    """
+    stem = source_filename.rsplit(".", 1)[0] if "." in source_filename else source_filename
+    return re.sub(r"[^\w\-]", "_", stem) or "doc"
+
+
 def build_context(chunks: list[SearchResult]) -> str:
     parts = []
     for chunk in chunks:
         payload = chunk.payload
-        label = f"[Kaynak: Sayfa {payload['page_number']}, Paragraf {payload['paragraph_index']}]"
+        doc = doc_label(payload.get("source_filename", "doc"))
+        label = (
+            f"[Kaynak: {doc}, Sayfa {payload['page_number']}, "
+            f"Paragraf {payload['paragraph_index']}]"
+        )
         parts.append(f"{label}\n{payload['text']}")
     return "\n\n".join(parts)
 

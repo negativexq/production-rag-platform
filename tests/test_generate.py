@@ -16,7 +16,13 @@ def _local_tracer_with_exporter():
 
 def _chunk(page: int, paragraph: int, text: str) -> SearchResult:
     return SearchResult(
-        score=0.9, payload={"page_number": page, "paragraph_index": paragraph, "text": text}
+        score=0.9,
+        payload={
+            "page_number": page,
+            "paragraph_index": paragraph,
+            "text": text,
+            "source_filename": "doc.pdf",
+        },
     )
 
 
@@ -55,36 +61,36 @@ async def test_stream_answer_first_event_is_metadata_with_prompt_version():
 @pytest.mark.asyncio
 async def test_stream_answer_yields_token_events_in_order():
     chunks = [_chunk(2, 0, "Refunds take 30 days.")]
-    ollama = _FakeOllama(["Refunds ", "take ", "30 days ", "[s.2/0]."])
+    ollama = _FakeOllama(["Refunds ", "take ", "30 days ", "[s.doc:2/0]."])
 
     events = await _collect("How long?", chunks, ollama)
 
     token_events = [e for e in events if e["type"] == "token"]
-    assert [e["content"] for e in token_events] == ["Refunds ", "take ", "30 days ", "[s.2/0]."]
+    assert [e["content"] for e in token_events] == ["Refunds ", "take ", "30 days ", "[s.doc:2/0]."]
 
 
 @pytest.mark.asyncio
 async def test_stream_answer_emits_grounding_event_last():
     chunks = [_chunk(2, 0, "Refunds take 30 days.")]
-    ollama = _FakeOllama(["Refunds take 30 days [s.2/0]."])
+    ollama = _FakeOllama(["Refunds take 30 days [s.doc:2/0]."])
 
     events = await _collect("How long?", chunks, ollama)
 
     assert events[-1]["type"] == "grounding"
     assert events[-1]["grounded"] is True
-    assert events[-1]["citations_found"] == [(2, 0)]
+    assert events[-1]["citations_found"] == [("doc", 2, 0)]
 
 
 @pytest.mark.asyncio
 async def test_stream_answer_grounding_event_flags_fabricated_citation():
     chunks = [_chunk(2, 0, "Refunds take 30 days.")]
-    ollama = _FakeOllama(["Refunds take 30 days [s.99/0]."])  # 99 was never in context
+    ollama = _FakeOllama(["Refunds take 30 days [s.doc:99/0]."])  # 99 was never in context
 
     events = await _collect("How long?", chunks, ollama)
 
     grounding_event = events[-1]
     assert grounding_event["grounded"] is False
-    assert grounding_event["ungrounded_citations"] == [(99, 0)]
+    assert grounding_event["ungrounded_citations"] == [("doc", 99, 0)]
 
 
 @pytest.mark.asyncio
@@ -115,7 +121,7 @@ async def test_stream_answer_uses_requested_prompt_version_content():
 @pytest.mark.asyncio
 async def test_stream_answer_creates_generate_span_with_attributes():
     chunks = [_chunk(2, 0, "Refunds take 30 days.")]
-    ollama = _FakeOllama(["Refunds take 30 days [s.2/0]."])
+    ollama = _FakeOllama(["Refunds take 30 days [s.doc:2/0]."])
     tracer, exporter = _local_tracer_with_exporter()
 
     await _collect("How long?", chunks, ollama, model="qwen", prompt_version="v1", tracer=tracer)
@@ -136,7 +142,7 @@ async def test_stream_answer_generate_span_does_not_contain_full_answer_text():
     # high-cardinality data (full chunk text / full generated answer) must
     # never end up as a span attribute — see docs/PLANNING.md Sprint 8 plan.
     chunks = [_chunk(2, 0, "Refunds take 30 days.")]
-    ollama = _FakeOllama(["Refunds take 30 days [s.2/0]."])
+    ollama = _FakeOllama(["Refunds take 30 days [s.doc:2/0]."])
     tracer, exporter = _local_tracer_with_exporter()
 
     await _collect("How long?", chunks, ollama, tracer=tracer)
