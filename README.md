@@ -72,6 +72,27 @@ out to be a real production bug) were recorded at the end of each sprint.
 | 9 | Golden-set evaluation (DeepEval + 7B judge) — chunk size/k-n/prompt decisions settled with real data |
 | 10 | Docker Compose polish — backend containerized, Ollama stays native |
 
+## Technologies Used
+
+Layer by layer, what's actually running (not aspirational — each line was
+verified in a sprint closing note in [docs/PLANNING.md](docs/PLANNING.md)):
+
+| Layer | Technology | Notes |
+|---|---|---|
+| Parsing | PyMuPDF (`fitz`) | Page/paragraph-preserving text extraction (Sprint 1) |
+| Chunking | Whitespace token counter, 500/50 (size/overlap) | Provisional default; Sprint 9 found the right size is corpus-dependent, kept as-is (see Known Limitations) |
+| Embedding | Ollama (native, Metal), `nomic-embed-text` | 768-dim, cosine distance; requires `search_document:`/`search_query:` task prefixes for quality (Sprint 2/3) |
+| Generation | Ollama (native, Metal), `qwen2.5:3b-instruct` | Serving-path model; kept small for latency, evaluation judge uses a larger model (see Evaluation row) |
+| Vector DB | Qdrant | Dense + sparse (BM25 via FastEmbed `Qdrant/bm25`), native RRF fusion (Sprint 2/3). SPLADE was tried and rejected — ~1000x slower than BM25 on an M2 CPU |
+| Metadata filtering | Qdrant payload filters | `doc_id`, `source_filename`, `page_number` (Sprint 4) |
+| Reranking | `sentence-transformers` CrossEncoder, `ms-marco-MiniLM-L-6-v2` | Runs on CPU, ~2.8ms/pair measured (Sprint 5) |
+| Backend | FastAPI | Containerized since Sprint 10; SSE streaming for `/chat` (Sprint 6) |
+| Prompt versioning | File-based (`prompts/answer_v1.txt`, `v2.txt`) | Active version is a config value; v1 kept as default after real evaluation (Sprint 7/9) |
+| Observability | OpenTelemetry + Jaeger | 6 spans/request: `chat_request`, `load_models`, `embed_query`, `retrieve_hybrid`, `rerank`, `generate` (Sprint 8) |
+| Evaluation | DeepEval + `qwen2.5:7b-instruct` (judge) | RAGAS was tried first and rejected — an unresolvable dependency conflict (`langchain_community.chat_models.vertexai` import failure), not a design choice (Sprint 9) |
+| UI | Streamlit | Separate venv (`.venv-ui`) + `requirements-ui.txt` — avoids a real `starlette` version conflict with FastAPI's pin (Sprint 11) |
+| Orchestration | Docker Compose | Qdrant + Jaeger + backend; Ollama stays native — Docker Desktop on macOS has no Metal GPU passthrough (Sprint 0/10) |
+
 ## Prerequisites
 
 - Docker Desktop
@@ -194,6 +215,47 @@ PYTHONPATH=. .venv/bin/python scripts/run_evaluation.py --skip-generation-metric
 
 See [docs/PLANNING.md](docs/PLANNING.md) Sprint 9 for the judge model
 decision, real comparison results, and options like `--limit`/`--golden-set`.
+
+## Known Limitations
+
+Real, documented gaps — not a hedge. Each one is traceable to a sprint
+closing note in [docs/PLANNING.md](docs/PLANNING.md).
+
+- **Citation page/paragraph numbers can be wrong even for the correct
+  document.** The judge/generation model occasionally cites a real
+  document but a fabricated page/paragraph within it. The post-hoc
+  grounding check catches and flags this (⚠️ in the UI) but doesn't block
+  the streamed answer — see the Sprint 11 post-release bug fix note.
+- **The same citation tag can be repeated after every word or list item**
+  instead of once per sentence/list. A prompt instruction reduced this but
+  didn't eliminate it — confirmed probabilistic (2 clean out of 3 repeat
+  trials), not a guarantee. See the Sprint 11 follow-up note.
+- **Metadata filtering is limited to `doc_id`, `source_filename`, and
+  `page_number`** — there's no date or tag field. Adding one requires an
+  ingestion-side design decision (file date? PDF metadata? manual
+  tagging?) that was deliberately deferred (Sprint 4).
+- **Chunk size (500/50 tokens) and rerank k/n (20/5) were only validated
+  against one small, single-source golden set** (a 6-page fictional PDF)
+  — not revalidated at scale or against a diverse corpus. Sprint 9 found
+  smaller chunks (paragraph-level) roughly doubled precision on that
+  golden set, but the defaults were deliberately left unchanged pending
+  broader validation.
+- **Scanned/image-only PDFs (no text layer) aren't supported** — pages
+  without extractable text are silently skipped during ingestion
+  (Sprint 1).
+- **No query rewriting or HyDE** — questions are embedded and searched
+  exactly as typed.
+- **`qdrant-client`'s `:memory:` test mode diverges from a real server**
+  in two confirmed cases: querying an empty collection with the sparse
+  IDF modifier throws `KeyError` locally but returns an empty result on a
+  real server (Sprint 3), and `query_filter` is silently ignored during
+  prefetch+fusion queries locally but is correctly applied on a real
+  server (Sprint 4). Tests that depend on this behavior require a real
+  Qdrant instance and are skipped when one isn't available.
+- **Single-user, single-session** — no auth, no multi-tenancy, no
+  persisted conversation history. `st.session_state` holds chat history
+  only for the current browser session; a page refresh clears it. A
+  deliberate scope decision, not an oversight (Sprint 11).
 
 ## Project Structure
 
