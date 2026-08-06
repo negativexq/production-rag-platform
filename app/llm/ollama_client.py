@@ -10,6 +10,14 @@ import httpx
 # minute for a single call — see docs/PLANNING.md Sprint 9 closing note.
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
+# Ollama's own default is 5 minutes — confirmed via `curl /api/ps`'s
+# `expires_at` field on a real running instance. A 7B model evicted between
+# requests costs a real, measured ~22s to reload from disk on the next
+# call vs ~4s when already warm (see docs/PLANNING.md Sprint 12 post-release
+# note) — worth keeping loaded much longer than the default for an app
+# where requests are bursty but not constant.
+DEFAULT_KEEP_ALIVE = "30m"
+
 
 class OllamaUnreachableError(Exception):
     """Raised when the native Ollama instance cannot be reached."""
@@ -39,7 +47,11 @@ class OllamaClient:
         try:
             response = await self._client.post(
                 "/api/embeddings",
-                json={"model": model, "prompt": f"{prefix}{text}"},
+                json={
+                    "model": model,
+                    "prompt": f"{prefix}{text}",
+                    "keep_alive": DEFAULT_KEEP_ALIVE,
+                },
             )
             response.raise_for_status()
         except httpx.HTTPError as exc:
@@ -52,7 +64,12 @@ class OllamaClient:
             async with self._client.stream(
                 "POST",
                 "/api/chat",
-                json={"model": model, "messages": messages, "stream": True},
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "stream": True,
+                    "keep_alive": DEFAULT_KEEP_ALIVE,
+                },
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():

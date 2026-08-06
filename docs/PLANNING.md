@@ -1141,3 +1141,46 @@ denendi: cevap doğru şirket adı, doğru tarih, doğru citation ve
 
 129 test yeşil (model adı değişikliği testleri etkilemedi — testler
 `settings.ollama_model`'i dinamik okuyor), `ruff check` temiz.
+
+### Post-release fix: 22s'lik gecikme — Ollama'nın model boşaltma davranışı
+
+**Gözlem**: 7B'ye geçtikten sonra bazı sorular ~4s'de cevaplanırken bazıları
+~22s sürüyordu — aynı model, aynı soru tipi, tutarsız bir fark.
+
+**Kök sebep, gerçek veriyle doğrulandı (varsayılmadı)**: `curl
+http://localhost:11434/api/ps` çalıştırıldı — Ollama'nın yüklü modeller
+için döndürdüğü `expires_at` alanı, modelin **varsayılan olarak 5 dakika**
+sonra bellekten atıldığını gösterdi. `OllamaClient` (`app/llm/ollama_client.py`)
+`/api/chat` ve `/api/embeddings` çağrılarında `keep_alive` parametresi hiç
+göndermiyordu, yani Ollama'nın kendi varsayılanına bağlıydı. İki soru
+arasında 5 dakikadan uzun bir boşluk olduğunda (kullanıcı okuyup
+düşünürken çok olağan), 7B model (4.7GB) bellekten atılıyor, bir sonraki
+istek onu diskten yeniden yüklemek zorunda kalıyordu — bu da ölçülen ~22s'nin
+gerçek kaynağıydı, model her seferinde yavaş değildi.
+
+**Düzeltme**: `DEFAULT_KEEP_ALIVE = "30m"` eklendi, hem `embed()` hem
+`stream_chat()` çağrılarının JSON gövdesine `keep_alive` alanı olarak
+geçiliyor. Yeni bir regresyon testi eklendi
+(`test_embed_sends_keep_alive_so_ollama_does_not_unload_the_model`), ayrıca
+mevcut `stream_chat` testi de `keep_alive` alanını doğrulayacak şekilde
+güncellendi.
+
+**Gerçekten doğrulandı (iki ölçüm, aynı soru, art arda)**: Backend yeniden
+build edilip ayağa kaldırıldı. İlk `/chat` çağrısı (backend yeni başladığı
+için model soğuktu) **20.76s** sürdü — bu kaçınılmaz, model henüz RAM'de
+değilken hiçbir `keep_alive` ayarı ilk yüklemeyi hızlandıramaz. Hemen
+ardından `curl /api/ps` ile `qwen2.5:7b-instruct`'un `expires_at`'inin
+**1800 saniye** (30 dakika) olduğu doğrulandı (fix öncesi ~300s olurdu).
+İkinci `/chat` çağrısı (artık warm) **2.88s** sürdü — ~7x'lik somut bir
+iyileşme, sık kullanım senaryosunda tekrarlanan soğuk yüklemeleri ortadan
+kaldırıyor.
+
+**Kapsam dışı bırakılan**: İlk/soğuk çağrının maliyeti (~20s) bu fix'le
+çözülmüyor — bu, modelin gerçekten ilk kez RAM'e yüklenmesi, kaçınılmaz.
+Bunu tamamen ortadan kaldırmak isteseydik Ollama'yı `OLLAMA_KEEP_ALIVE=-1`
+(süresiz) ile başlatmak ya da bir "warm-up" isteği göndermek gerekirdi —
+bilinçli olarak bu sprint'in kapsamına alınmadı, 30 dakikalık pencere
+gerçek kullanım paternleri (soru-cevap arası birkaç dakika) için yeterli
+kabul edildi.
+
+130 test yeşil, `ruff check` temiz.

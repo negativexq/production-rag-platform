@@ -3,7 +3,12 @@ import json
 import httpx
 import pytest
 
-from app.llm.ollama_client import DEFAULT_TIMEOUT_SECONDS, OllamaClient, OllamaUnreachableError
+from app.llm.ollama_client import (
+    DEFAULT_KEEP_ALIVE,
+    DEFAULT_TIMEOUT_SECONDS,
+    OllamaClient,
+    OllamaUnreachableError,
+)
 
 
 def _mock_client(handler) -> httpx.AsyncClient:
@@ -57,6 +62,26 @@ async def test_embed_sends_prefixed_prompt_and_parses_embedding():
 
 
 @pytest.mark.asyncio
+async def test_embed_sends_keep_alive_so_ollama_does_not_unload_the_model():
+    """Real bug found in production: Ollama's default keep_alive is 5
+    minutes (confirmed via `curl /api/ps`'s `expires_at` field) — a 7B
+    model evicted between requests costs ~22s to reload from disk on the
+    next call, vs ~4s when already warm. See docs/PLANNING.md Sprint 12
+    post-release note.
+    """
+    captured_body = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_body.update(json.loads(request.content))
+        return httpx.Response(200, json={"embedding": [0.1]})
+
+    client = OllamaClient(http_client=_mock_client(handler))
+    await client.embed("hello world", model="nomic-embed-text")
+
+    assert captured_body["keep_alive"] == DEFAULT_KEEP_ALIVE
+
+
+@pytest.mark.asyncio
 async def test_embed_raises_when_unreachable():
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)
@@ -82,6 +107,7 @@ async def test_stream_chat_yields_content_tokens_in_order():
         body = json.loads(request.content)
         assert body["stream"] is True
         assert body["model"] == "qwen2.5:3b-instruct"
+        assert body["keep_alive"] == DEFAULT_KEEP_ALIVE
         return httpx.Response(200, content=ndjson)
 
     client = OllamaClient(http_client=_mock_client(handler))
