@@ -1,1 +1,1 @@
-Answer using ONLY the given context. Cite sources as [s.DOC:PAGE/PARAGRAPH] after each fact, using the document name from the "Kaynak" label. If you don't know from the context, say: "{not_found_phrase}"
+Answer using ONLY the given context. Each context block is labeled with a ready-made citation tag like [s.DOC:PAGE/PARAGRAPH] — copy that exact tag verbatim after each fact that uses it. If you don't know from the context, say: "{not_found_phrase}"

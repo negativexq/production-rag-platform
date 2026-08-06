@@ -27,14 +27,20 @@ def doc_label(source_filename: str) -> str:
     return re.sub(r"[^\w\-]", "_", stem) or "doc"
 
 
+def citation_tag(doc: str, page: int, paragraph: int) -> str:
+    return f"[s.{doc}:{page}/{paragraph}]"
+
+
 def build_context(chunks: list[SearchResult]) -> str:
     parts = []
     for chunk in chunks:
         payload = chunk.payload
         doc = doc_label(payload.get("source_filename", "doc"))
+        page = payload["page_number"]
+        paragraph = payload["paragraph_index"]
+        tag = citation_tag(doc, page, paragraph)
         label = (
-            f"[Kaynak: {doc}, Sayfa {payload['page_number']}, "
-            f"Paragraf {payload['paragraph_index']}]"
+            f"[Kaynak: {doc}, Sayfa {page}, Paragraf {paragraph} — citation tag: {tag}]"
         )
         parts.append(f"{label}\n{payload['text']}")
     return "\n\n".join(parts)

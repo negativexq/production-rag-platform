@@ -967,3 +967,36 @@ zaten karşılanmış görüp CUDA varyantını atladı. Rebuild süresi buna ba
 olarak dramatik kısaldı.
 
 121 test yeşil, `ruff check` temiz.
+
+### Takip iyileştirmesi: model sayfa/paragraf numarasını yanlış hatırlıyordu
+
+**Gözlem**: Yukarıdaki fix'ten sonra bile, aynı soruyu tekrar tekrar sorunca
+model bazen doğru dokümanı doğru şekilde etiketliyor ama sayfa/paragraf
+numarasını yanlış üretiyordu (örn. gerçek koordinat `1/0` iken model `3/9`,
+`4/10`, `18/0` gibi rastgele sayılar yazdı). Grounding bunları doğru
+yakalayıp uyarıyordu — sistem güvenliydi — ama kullanıcı deneyimi kötüydü
+(sık sık ⚠️ uyarısı).
+
+**Kök sebep**: `build_context`, LLM'e "[Kaynak: DOC, Sayfa X, Paragraf Y]"
+biçiminde bir *insan-okur* etiket veriyordu; model bunu `[s.DOC:X/Y]`
+citation formatına **kendi zihninde dönüştürmek** zorundaydı — bu dönüşüm
+sırasında (özellikle 7B gibi küçük bir modelde) sayı transkripsiyon hatası
+oluyordu.
+
+**Düzeltme**: `build_context` artık her chunk'ın etiketine kullanıma hazır,
+kopyalanabilir citation tag'ini de ekliyor: `"[Kaynak: DOC, Sayfa X,
+Paragraf Y — citation tag: [s.DOC:X/Y]]"`. Prompt (`answer_v1.txt`,
+`answer_v2.txt`) artık modele bu tag'i **kendi hesaplamak yerine harfiyen
+kopyalamasını** söylüyor. Yeni bir test eklendi
+(`test_build_context_includes_a_ready_made_citation_tag_per_chunk`).
+
+**Gerçekten doğrulandı**: Container yeniden build edilip aynı soru art arda
+4 kez soruldu. Önceki denemelerde her seferinde en az bir ungrounded
+citation vardı; düzeltmeden sonraki 4 denemenin **hiçbirinde ungrounded
+citation çıkmadı** — model bazen hiç citation vermedi (zararsız, kabul
+edilebilir), ama her citation verdiğinde koordinat gerçekten doğruydu.
+Kalan bir gözlem: modelin bazen konuyla ilgisiz bir dokümandan (nimbus
+handbook) içerik karıştırması — bu retrieval alaka düzeyiyle ilgili, ayrı
+ve kapsam dışı bir konu.
+
+122 test yeşil, `ruff check` temiz.

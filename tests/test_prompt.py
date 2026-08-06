@@ -4,9 +4,15 @@ from app.llm.prompt import NOT_FOUND_PHRASE, build_context, build_messages, load
 from app.retrieval.hybrid_search import SearchResult
 
 
-def _result(page: int, paragraph: int, text: str) -> SearchResult:
+def _result(page: int, paragraph: int, text: str, source_filename: str = "doc.pdf") -> SearchResult:
     return SearchResult(
-        score=0.9, payload={"page_number": page, "paragraph_index": paragraph, "text": text}
+        score=0.9,
+        payload={
+            "page_number": page,
+            "paragraph_index": paragraph,
+            "text": text,
+            "source_filename": source_filename,
+        },
     )
 
 
@@ -22,6 +28,20 @@ def test_build_context_labels_each_chunk_with_page_and_paragraph():
     assert "Sayfa 5, Paragraf 1" in context
     assert "First chunk text." in context
     assert "Second chunk text." in context
+
+
+def test_build_context_includes_a_ready_made_citation_tag_per_chunk():
+    """Regression guard: the model must not have to compose the citation
+    tag itself from the Sayfa/Paragraf numbers (it was found to transcribe
+    these incorrectly in real usage) — build_context hands it an exact,
+    copy-paste-ready tag instead. See docs/PLANNING.md Sprint 11 post-release
+    bug fix note.
+    """
+    chunks = [_result(2, 0, "First chunk text.", source_filename="handbook.pdf")]
+
+    context = build_context(chunks)
+
+    assert "[s.handbook:2/0]" in context
 
 
 def test_build_context_empty_chunks_produces_empty_string():
@@ -55,7 +75,8 @@ def test_load_system_prompt_v1_preserves_sprint6_fixes():
     prompt = load_system_prompt("v1")
 
     assert "CITATION RULE" in prompt
-    assert '"[Kaynak: sample_doc, Sayfa 3, Paragraf 0]"' in prompt
+    assert "citation tag" in prompt
+    assert "copy" in prompt.lower()
     assert "Do not write" in prompt and "Kaynak" in prompt
     assert NOT_FOUND_PHRASE in prompt
 
@@ -67,7 +88,7 @@ def test_load_system_prompt_v2_is_a_genuinely_different_shorter_variant():
     assert v1 != v2
     assert len(v2) < len(v1)
     # v2 deliberately omits the explicit worked example from v1
-    assert "[Kaynak: sample_doc, Sayfa 3, Paragraf 0]" not in v2
+    assert "Do not write" not in v2
     assert NOT_FOUND_PHRASE in v2
 
 
