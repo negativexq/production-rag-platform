@@ -759,6 +759,67 @@ Scope:
 
 Definition of Done: Sıfırdan bir makinede (Ollama kurulu olmak kaydıyla) `docker compose up` + `make ingest` + bir örnek sorgu ile sistem uçtan uca çalışıyor.
 
+### Kapanış Notu (2026-08-06)
+
+Sprint 10 tamamlandı, DoD karşılandı. Açık soru karara bağlandı:
+
+- **Backend container'a girdi, Ollama native kaldı.** Planın orijinal scope
+  satırı zaten "`docker compose up`: Qdrant + Jaeger + backend" diyordu — bu
+  sprint bunu gerçekten uyguladı. Ollama'nın native kalma gerekçesi
+  değişmedi (Sprint 0: Docker Desktop macOS'ta Metal GPU passthrough yok).
+- **`make ingest` (CLI) container'a GİRMEDİ, host/venv'de kaldı.** Bilinçli
+  bir kapsam kararı: ingestion host'taki PDF dosyalarını okuyan bir batch
+  işi; container'a taşımak dosya mount'u gibi ek karmaşıklık gerektirirdi ve
+  bu sprint'in asıl kanıtlaması gereken şey (serving path'inin container'dan
+  native Ollama'ya gerçekten ulaşması) için gerekli değildi.
+
+**Sprint 0'dan beri bekleyen varsayım gerçekten test edildi**: `.env.example`'daki
+`OLLAMA_BASE_URL=http://host.docker.internal:11434` üç ayrı adımda doğrulandı,
+hiçbiri varsayılmadı:
+1. `docker compose exec backend curl http://host.docker.internal:11434/api/tags`
+   — container'ın gerçekten native Ollama'ya ulaştığı, ham `curl` ile.
+2. Backend'in kendi `/health/ollama` endpoint'i — `qwen2.5:7b-instruct,
+   nomic-embed-text, qwen2.5:3b-instruct, gemma2:2b` tam model listesini döndü.
+3. **Uçtan uca gerçek sorgu**: host'tan `make ingest` ile bir PDF yüklendi,
+   container'daki backend'e gerçek bir `/chat` isteği atıldı — streaming
+   cevap, doğru `[s.1/0]` citation'ıyla ve `grounded: true` ile döndü. Tüm
+   pipeline (embed → retrieve → rerank → generate, container içinden native
+   Ollama'ya) çalıştığı kanıtlandı.
+
+**Sıfırdan kurulum gerçekten test edildi (varsayılmadı)**: `docker compose
+down -v` (tüm container/volume/network silindi) sonrası `docker compose up -d`
+ile sistem 8 saniyede tekrar `healthy` duruma geldi — `/health` ve
+`/health/ollama` temiz durumda da 200 döndü.
+
+**Beklenmeyen bulgu — gerçek bir bağımlılık drift'i yakalandı**: `docker
+compose build` ilk denemede `pydantic-settings==2.7.1` (Sprint 0'dan beri
+sabit) ile `deepeval==4.1.5`'in gerektirdiği `pydantic-settings>=2.10.1`
+arasında **gerçek bir çakışma** verdi. Kontrol edildiğinde, yerel venv'de
+zaten sessizce `2.14.2`'ye yükselmiş olduğu görüldü (Sprint 9'da `deepeval`
+kurulurken pip otomatik çözmüştü) — ama `requirements.txt` hiç
+güncellenmemişti. Bu, **container build'i temiz bir ortamda çalıştığı için**
+yakalanabilen, host venv'de fark edilmeyen gerçek bir drift'ti.
+`requirements.txt` düzeltildi (`pydantic-settings==2.14.2`), 108 test hâlâ
+yeşil.
+
+**Not**: Build sırasında bir kez de geçici bir ağ kaynaklı wheel hash
+uyuşmazlığı (`torch`'un indirilmesi sırasında) yaşandı — retry ile
+kendiliğinden düzeldi, kod/bağımlılık sorunu değildi.
+
+**Diğer kararlar**:
+- Cross-encoder/sparse-encoder modelleri için `hf_cache` adlı bir named
+  volume eklendi — `docker compose down` + `up` her seferinde ~9s+'lik
+  model indirmesini tekrarlamasın diye.
+- Backend servisinin ortam değişkenleri `.env` dosyasından değil,
+  `docker-compose.yml`'in kendi `environment:` bloğundan geliyor (container
+  içi doğru servis adları — `qdrant`, `jaeger`, `host.docker.internal` —
+  host'ta native çalıştırırken kullanılan `localhost` değerlerinden farklı
+  olduğu için).
+- `Dockerfile`: `python:3.12-slim` taban imaj, `/health` üzerinden Docker
+  healthcheck.
+
+Sıradaki: Sprint 11 — UI (stretch).
+
 ## Sprint 11 — UI (stretch)
 
 Amaç: Streaming cevap ve citation'ları gösteren basit bir arayüz.
