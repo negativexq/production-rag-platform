@@ -1,0 +1,124 @@
+[
+  {
+    "id": "q01",
+    "question": "How much free storage does a new Nimbus account get?",
+    "expected_locations": [[1, 0]],
+    "reference_answer": "15GB of free storage."
+  },
+  {
+    "id": "q02",
+    "question": "Does Nimbus support SMS-based two-factor authentication?",
+    "expected_locations": [[1, 1]],
+    "reference_answer": "No, only authenticator apps like Google Authenticator and Authy are supported."
+  },
+  {
+    "id": "q03",
+    "question": "How much does the Plus plan cost per month and how much storage does it include?",
+    "expected_locations": [[2, 0]],
+    "reference_answer": "The Plus plan is $7.99/month and includes 1TB of storage."
+  },
+  {
+    "id": "q04",
+    "question": "How long is file version history kept on paid plans?",
+    "expected_locations": [[2, 0]],
+    "reference_answer": "90 days of unlimited version history."
+  },
+  {
+    "id": "q05",
+    "question": "What happens to files that exceed the new storage limit after a downgrade?",
+    "expected_locations": [[2, 1]],
+    "reference_answer": "They are archived in read-only mode rather than deleted."
+  },
+  {
+    "id": "q06",
+    "question": "When do storage upgrades take effect?",
+    "expected_locations": [[2, 1]],
+    "reference_answer": "Immediately upon payment."
+  },
+  {
+    "id": "q07",
+    "question": "What is the default expiration for a shared link if none is specified?",
+    "expected_locations": [[3, 0]],
+    "reference_answer": "30 days."
+  },
+  {
+    "id": "q08",
+    "question": "Who can change another collaborator's folder permission role?",
+    "expected_locations": [[3, 1]],
+    "reference_answer": "The folder owner or an Editor with 'manage permissions' rights."
+  },
+  {
+    "id": "q09",
+    "question": "What causes the desktop sync client to show a 'Sync Paused' status?",
+    "expected_locations": [[4, 0]],
+    "reference_answer": "The local disk running below 5GB of free space."
+  },
+  {
+    "id": "q10",
+    "question": "What usually causes repeated sync conflicts on the same file?",
+    "expected_locations": [[4, 1]],
+    "reference_answer": "The file being open in an application that locks it for exclusive writing."
+  },
+  {
+    "id": "q11",
+    "question": "Can I get a refund on a monthly plan?",
+    "expected_locations": [[5, 0]],
+    "reference_answer": "No, monthly plans are not refundable, but can be cancelled at any time."
+  },
+  {
+    "id": "q12",
+    "question": "Within how many days can an annual plan be refunded?",
+    "expected_locations": [[5, 0]],
+    "reference_answer": "14 days."
+  },
+  {
+    "id": "q13",
+    "question": "How many payment retry attempts happen before an account is downgraded?",
+    "expected_locations": [[5, 1]],
+    "reference_answer": "Three retry attempts over 7 days."
+  },
+  {
+    "id": "q14",
+    "question": "How long does a full data export download link remain valid?",
+    "expected_locations": [[6, 0]],
+    "reference_answer": "7 days."
+  },
+  {
+    "id": "q15",
+    "question": "How many days is the grace period before an account deletion becomes permanent?",
+    "expected_locations": [[6, 1]],
+    "reference_answer": "30 days."
+  },
+  {
+    "id": "q16",
+    "question": "Within how many hours is the data export download link emailed?",
+    "expected_locations": [[6, 0]],
+    "reference_answer": "Within 24 hours."
+  },
+  {
+    "id": "q17",
+    "question": "If I downgrade my plan and then a payment fails afterward, what ultimately happens to files over the free storage limit?",
+    "expected_locations": [[2, 1], [5, 1]],
+    "reference_answer": "They are archived/kept read-only rather than deleted, both when downgrading past a storage limit and when a failed payment downgrades the account to Free."
+  },
+  {
+    "id": "q18",
+    "question": "What are the storage limits across all Nimbus plans, from free to Pro?",
+    "expected_locations": [[1, 0], [2, 0]],
+    "reference_answer": "Free: 15GB, Basic: 100GB, Plus: 1TB, Pro: 5TB."
+  },
+  {
+    "id": "q19",
+    "question": "What is the minimum iOS version required for the Nimbus mobile app?",
+    "expected_locations": [],
+    "reference_answer": null,
+    "expect_not_found": true
+  },
+  {
+    "id": "q20",
+    "question": "Does Nimbus offer a student discount?",
+    "expected_locations": [],
+    "reference_answer": null,
+    "expect_not_found": true
+  }
+]

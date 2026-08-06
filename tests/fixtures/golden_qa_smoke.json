@@ -1,0 +1,46 @@
+[
+  {
+    "id": "q02",
+    "question": "Does Nimbus support SMS-based two-factor authentication?",
+    "expected_locations": [[1, 1]],
+    "reference_answer": "No, only authenticator apps like Google Authenticator and Authy are supported."
+  },
+  {
+    "id": "q05",
+    "question": "What happens to files that exceed the new storage limit after a downgrade?",
+    "expected_locations": [[2, 1]],
+    "reference_answer": "They are archived in read-only mode rather than deleted."
+  },
+  {
+    "id": "q09",
+    "question": "What causes the desktop sync client to show a 'Sync Paused' status?",
+    "expected_locations": [[4, 0]],
+    "reference_answer": "The local disk running below 5GB of free space."
+  },
+  {
+    "id": "q13",
+    "question": "How many payment retry attempts happen before an account is downgraded?",
+    "expected_locations": [[5, 1]],
+    "reference_answer": "Three retry attempts over 7 days."
+  },
+  {
+    "id": "q17",
+    "question": "If I downgrade my plan and then a payment fails afterward, what ultimately happens to files over the free storage limit?",
+    "expected_locations": [[2, 1], [5, 1]],
+    "reference_answer": "They are archived/kept read-only rather than deleted, both when downgrading past a storage limit and when a failed payment downgrades the account to Free."
+  },
+  {
+    "id": "q19",
+    "question": "What is the minimum iOS version required for the Nimbus mobile app?",
+    "expected_locations": [],
+    "reference_answer": null,
+    "expect_not_found": true
+  },
+  {
+    "id": "q20",
+    "question": "Does Nimbus offer a student discount?",
+    "expected_locations": [],
+    "reference_answer": null,
+    "expect_not_found": true
+  }
+]

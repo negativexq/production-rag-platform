@@ -641,6 +641,112 @@ Açık sorular:
 
 Definition of Done: Golden set üzerinde çalıştırılan bir komut, retrieval + generation metriklerini raporluyor; bu rapor deploy öncesi bir regression check olarak da kullanılabiliyor.
 
+### Kapanış Notu (2026-08-06)
+
+Sprint 9 tamamlandı, DoD karşılandı. Açık soru çözüldü:
+
+- **RAGAS: kullanılamaz durumda, koddan/tasarımdan değil bağımlılık
+  çakışmasından.** Hem güncel (`0.4.3`) hem eski (`0.2.15`) sürüm denendi,
+  ikisi de `ragas`'ın koşulsuz import ettiği
+  `langchain_community.chat_models.vertexai`'ın güncel `langchain-community`
+  (`0.4.2`)'de artık var olmamasından ötürü import aşamasında patladı.
+  `langchain-google-vertexai` kurmak, `langchain-community`'yi eski sürüme
+  çekmek gibi çözümler denendi; hepsi ya aynı hatayı verdi ya da
+  `langchain-core`/`langgraph`/`langchain-openai` zincirinde çözülemeyen
+  yeni çakışmalar açtı (`ContextOverflowError` import hatası). **Karar:
+  RAGAS bu ortamda hiç kullanılmıyor.**
+- **DeepEval: çalışıyor ama 3B judge güvenilmez, 7B judge güvenilir —
+  gerçekten ölçüldü.** `qwen2.5:3b-instruct` judge olarak
+  `FaithfulnessMetric`'i **0.0** skorladı ama sentezlenen gerekçe "hiç
+  çelişki yok" diyordu — `verbose_mode` ile bakıldığında model claim için
+  `verdict: "no"` üretmiş ama `reason: null` bırakmıştı (kendi şemasını
+  tutarlı dolduramamış). Aynı test case, sadece judge modeli
+  `qwen2.5:7b-instruct` (4.7GB, RAM/disk kontrol edilip indirildi) olarak
+  değiştirilince **1.0** ve tutarlı bir gerekçe verdi. **Karar: DeepEval +
+  `qwen2.5:7b-instruct` (sadece judge — RAG'ın kendi generation modeli
+  3B'de kalıyor, hız için).**
+- **Retrieval metrikleri judge gerektirmiyor**: golden set'teki kesin
+  `(page, paragraph)` referanslarıyla precision/recall deterministik
+  hesaplanıyor (`app/evaluation/retrieval_metrics.py`) — LLM'in kendi hata
+  payı devreye girmiyor.
+
+**Golden set**: `tests/fixtures/golden_source.py` gerçek bir kaynak PDF
+üretiyor (kurgusal ama iç tutarlı "Nimbus Cloud Storage" destek kılavuzu,
+6 sayfa × 2 paragraf), gerçek parser ile test edilip sayfa/paragraf
+eşleşmesi doğrulandı. `tests/fixtures/golden_qa.json`: 20 soru (16 tek-chunk,
+2 çok-chunk sentez, 2 context-dışı).
+
+**Gerçek karşılaştırmalar (Sprint 1/5/7'nin geçici kararları):**
+
+1. **Prompt v1 vs v2 (Sprint 7) — KESİNLEŞTİ.** 7 soruluk temsili bir alt
+   kümede (`golden_qa_smoke.json`: tek-chunk + çok-chunk + context-dışı
+   karışımı), gerçek 7B judge ile: v1 `faithfulness=0.70, answer_relevancy=
+   0.80, not_found_accuracy=1.0`; v2 `faithfulness=0.75, answer_relevancy=
+   0.70, not_found_accuracy=0.5`. Faithfulness'ta ikisi de yakın (7 soruluk
+   örneklemde gürültü payı içinde), ama **en kritik metrik olan
+   `not_found_accuracy`'de v1 kesin üstün** (2/2'ye karşı 1/2 — v2 bir
+   context-dışı soruda halüsinasyon yaptı, Sprint 6'nın temel "uydurma
+   yapma" hedefiyle doğrudan çelişen bir hata). **Karar: v1, aktif varsayılan
+   olarak KALIYOR** (`app/shared/config.py:active_prompt_version="v1"` zaten
+   buydu — bu sprint bunu iddia olmaktan çıkarıp veriyle doğrulanmış bir
+   karara çevirdi).
+2. **k/n (Sprint 5) — gerçek veriyle bilgilendirildi, kod değiştirilmedi.**
+   `top_k=20/top_n=5` (mevcut varsayılan) ile `top_k=10/top_n=3`
+   karşılaştırıldı: precision `0.122 → 0.204` (iyileşme), recall aynı
+   kaldı (`0.556`). Yani daha küçük `n`, recall kaybı olmadan precision'ı
+   artırıyor. **Kod değiştirilmedi** — bu sonuç 6 sayfalık tek bir golden
+   set'e dayanıyor, gerçek/çeşitli bir doküman korpusunda doğrulanmadan
+   varsayılanı değiştirmek riskli; bulgu gelecekteki bir ayarlama için not
+   düşüldü.
+3. **Chunk boyutu (Sprint 1) — corpus'a bağlı olduğu netleşti, tek bir sayı
+   olarak kesinleşmedi.** `500/50` (mevcut) ile `100/10` **birebir aynı**
+   sonucu verdi (`precision=0.122, recall=0.556`) — gerçek chunk sayıları
+   kontrol edildiğinde ikisinin de sayfa başına tek chunk ürettiği görüldü
+   (golden doküman paragrafları ~40-60 kelime, her ikisi de aynı chunk
+   sınırını üretiyor). `40/5`'e (paragraf granülaritesi) düşürülünce
+   precision `0.232`'ye (~2x), recall `0.861`'e çıktı — açık bir iyileşme,
+   ama **golden dokümanın kısa paragraflarına özgü** bir sonuç; genel ilke
+   (chunk boyutu içeriğin gerçek granülaritesine göre ayarlanmalı, sabit bir
+   sayı evrensel değil) kesinleşti, ama varsayılan `500/50` kod değişikliği
+   olmadan bırakıldı.
+
+**Rapor formatı/aracı**: `scripts/run_evaluation.py` — golden source PDF'i
+anlık üretip ingest ediyor, golden set'i (`--golden-set` ile override
+edilebilir, `--limit` ile alt kümeye indirilebilir) çalıştırıp JSON rapor
+üretiyor (`--output`). `--skip-generation-metrics` ile sadece retrieval
+karşılaştırmaları hızlıca (~40s) çalıştırılabiliyor.
+
+**Beklenmeyen, önemli bulgu #1 — model-swap tuzağı**: İlk tasarımda
+`run_evaluation()` her soru için sırayla embed→generate (3B)→judge (7B)
+yapıyordu. Gerçek bir koşum bunun 20 soru için 40+ dakika sürdüğünü
+gösterdi (izole ölçümlerden beklenen ~11 dakikanın 4 katı) — Ollama her
+seferinde 3B/7B arasında model değiştirmek zorunda kalıyordu. **Düzeltme**:
+`run_evaluation()` artık iki ayrı faz çalıştırıyor — önce tüm sorular için
+generation (tek model, swap yok), sonra tüm sorular için judge (tek model,
+swap yok). Bu, model swap'ını tamamen ortadan kaldırdı.
+
+**Beklenmeyen, önemli bulgu #2 — gerçek bir production bug bulundu ve
+düzeltildi**: İki-fazlı düzeltmeden sonra bile küçük bir smoke koşumu
+gerçek bir hatayla patladı: `httpx.ReadTimeout`,
+`app/llm/ollama_client.py`'deki **sabit 10 saniyelik timeout**'tan
+kaynaklanıyordu — 7B judge (ve yoğun yükte 3B generation) bazı çağrılarda
+10 saniyeden uzun sürebiliyor. Bu, **Sprint 0'dan beri** kod tabanında olan
+ve daha önce fark edilmemiş gerçek bir bug'dı; muhtemelen önceki "takılmış"
+görünen 30+ dakikalık koşunun asıl nedeniydi (sessiz timeout+retry
+döngüleri). **Düzeltme**: `DEFAULT_TIMEOUT_SECONDS=120.0`, `OllamaClient`
+artık yapılandırılabilir bir `timeout` parametresi alıyor
+(`tests/test_ollama_client.py`'a regresyon testleri eklendi). Bu düzeltme
+sonrası, önceden kaynak çakışması/timeout yüzünden kararsız görünen 4 e2e
+test (`test_generation_e2e.py` × 3, `test_tracing_e2e.py` × 1) tekrar
+çalıştırıldı ve hepsi geçti — gerçek bir regresyon değil, gerçek bir bug
+tespiti ve düzeltmesiydi.
+
+108 test yeşil (14 yeni: `test_retrieval_metrics.py`,
+`test_generation_metrics.py`, `test_harness.py`,
+`test_ollama_client.py`'a timeout testleri), `ruff check` temiz.
+
+Sıradaki: Sprint 10 — Docker Compose Polish.
+
 ## Sprint 10 — Docker Compose Polish
 
 Amaç: Tüm sistemin tek komutla ayağa kalkmasını sağlamak.

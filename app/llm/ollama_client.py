@@ -3,15 +3,27 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+# A 10s default was measured to be too short for local generation: a 7B
+# model used as an LLM judge (Sprint 9) hit httpx.ReadTimeout mid-request
+# because it hadn't produced a first token within 10s under load. Local
+# models on CPU/limited-RAM hardware can legitimately take well over a
+# minute for a single call — see docs/PLANNING.md Sprint 9 closing note.
+DEFAULT_TIMEOUT_SECONDS = 120.0
+
 
 class OllamaUnreachableError(Exception):
     """Raised when the native Ollama instance cannot be reached."""
 
 
 class OllamaClient:
-    def __init__(self, base_url: str | None = None, http_client: httpx.AsyncClient | None = None):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    ):
         self._owns_client = http_client is None
-        self._client = http_client or httpx.AsyncClient(base_url=base_url, timeout=10.0)
+        self._client = http_client or httpx.AsyncClient(base_url=base_url, timeout=timeout)
 
     async def list_models(self) -> list[str]:
         try:

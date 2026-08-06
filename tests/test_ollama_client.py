@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from app.llm.ollama_client import OllamaClient, OllamaUnreachableError
+from app.llm.ollama_client import DEFAULT_TIMEOUT_SECONDS, OllamaClient, OllamaUnreachableError
 
 
 def _mock_client(handler) -> httpx.AsyncClient:
@@ -107,3 +107,22 @@ async def test_stream_chat_raises_when_unreachable():
             [{"role": "user", "content": "hi"}], model="qwen2.5:3b-instruct"
         ):
             pass
+
+
+def test_default_timeout_is_generous_enough_for_slow_local_generation():
+    # A 10s timeout (the original default) was measured to be too short:
+    # a real evaluation run against qwen2.5:7b-instruct as an LLM judge hit
+    # httpx.ReadTimeout mid-stream because the model hadn't produced its
+    # first token within 10s under load. See docs/PLANNING.md Sprint 9
+    # closing note.
+    assert DEFAULT_TIMEOUT_SECONDS >= 120.0
+
+
+def test_client_uses_default_timeout_when_none_given():
+    client = OllamaClient(base_url="http://localhost:11434")
+    assert client._client.timeout.read == DEFAULT_TIMEOUT_SECONDS
+
+
+def test_client_accepts_custom_timeout():
+    client = OllamaClient(base_url="http://localhost:11434", timeout=5.0)
+    assert client._client.timeout.read == 5.0
