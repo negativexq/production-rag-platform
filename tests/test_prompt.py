@@ -81,6 +81,18 @@ def test_load_system_prompt_v1_preserves_sprint6_fixes():
     assert NOT_FOUND_PHRASE in prompt
 
 
+def test_load_system_prompt_v1_warns_against_repeating_the_tag_per_word():
+    """Regression guard: seen in real usage — the model was citing the same
+    tag after every single word in a list ("Python [s.doc:1/0] SQL
+    [s.doc:1/0] FastAPI [s.doc:1/0]...") instead of once per sentence/list.
+    See docs/PLANNING.md Sprint 11 post-release bug fix note.
+    """
+    prompt = load_system_prompt("v1")
+
+    assert "once" in prompt.lower()
+    assert "not after every word" in prompt.lower() or "not after each word" in prompt.lower()
+
+
 def test_load_system_prompt_v2_is_a_genuinely_different_shorter_variant():
     v1 = load_system_prompt("v1")
     v2 = load_system_prompt("v2")

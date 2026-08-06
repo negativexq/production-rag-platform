@@ -1000,3 +1000,25 @@ handbook) içerik karıştırması — bu retrieval alaka düzeyiyle ilgili, ayr
 ve kapsam dışı bir konu.
 
 122 test yeşil, `ruff check` temiz.
+
+### Küçük takip: aynı citation tag'i her kelimede tekrarlanıyordu
+
+**Gözlem**: Yukarıdaki fix'ten sonra bile, model bazen aynı citation tag'ini
+listedeki her madde/kelime için ayrı ayrı tekrarlıyordu (`"Python
+[s.doc:1/8] SQL [s.doc:1/8] FastAPI [s.doc:1/8]..."`) — yanlış değildi
+(grounded kalıyordu) ama okunabilirliği bozuyordu.
+
+**Düzeltme**: Prompt'a (`answer_v1.txt`, `answer_v2.txt`) "cite each tag
+ONLY ONCE per sentence or list, not after every word or every list item"
+talimatı eklendi. Yeni bir regression testi eklendi
+(`test_load_system_prompt_v1_warns_against_repeating_the_tag_per_word`).
+
+**Gerçekten doğrulandı (ve dürüstçe raporlandı)**: Aynı soru 3 kez daha
+soruldu. 2/3 denemede model artık tek, temiz bir citation kullandı; 1/3
+denemede hâlâ eski davranışa (kelime başına tekrar) döndü. Bu, küçük bir
+modelin (7B) talimat takibindeki doğal tutarsızlığı — kesin/deterministik
+bir garanti değil, olasılıksal bir iyileşme. Bilinçli olarak UI-tarafı bir
+"ardışık aynı tag'leri birleştir" post-processing eklenmedi (istenirse
+sonra eklenebilir) — mevcut iyileşme yeterli kabul edildi.
+
+123 test yeşil, `ruff check` temiz.
