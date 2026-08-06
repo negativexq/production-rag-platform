@@ -49,7 +49,12 @@ async def stream_answer(
         span.set_attribute("generate.prompt_version", prompt_version)
         span.set_attribute("generate.context_chunk_count", len(chunks))
 
-        yield {"type": "metadata", "prompt_version": prompt_version}
+        # "generate" isn't the root span (chat_request is), but trace_id is
+        # shared across every span in a trace, so this is the same ID the
+        # UI needs to look up the whole pipeline's step durations in Jaeger
+        # (Sprint 12) — no need to reach for the root span separately.
+        trace_id = format(span.get_span_context().trace_id, "032x")
+        yield {"type": "metadata", "prompt_version": prompt_version, "trace_id": trace_id}
 
         messages = build_messages(query, chunks, version=prompt_version)
         answer_parts = []

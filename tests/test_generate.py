@@ -55,7 +55,27 @@ async def test_stream_answer_first_event_is_metadata_with_prompt_version():
 
     events = await _collect("How long?", chunks, ollama, prompt_version="v2")
 
-    assert events[0] == {"type": "metadata", "prompt_version": "v2"}
+    assert events[0]["type"] == "metadata"
+    assert events[0]["prompt_version"] == "v2"
+    assert "trace_id" in events[0]
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_metadata_trace_id_matches_the_generate_span():
+    """The UI (Sprint 12) needs the trace ID to look up pipeline step
+    durations in Jaeger — verify it's the SAME trace ID as the actual
+    "generate" span that OpenTelemetry recorded, not a placeholder.
+    """
+    chunks = [_chunk(2, 0, "Refunds take 30 days.")]
+    ollama = _FakeOllama(["ok"])
+    tracer, exporter = _local_tracer_with_exporter()
+
+    events = await _collect("How long?", chunks, ollama, tracer=tracer)
+
+    generate_span = next(s for s in exporter.get_finished_spans() if s.name == "generate")
+    expected_trace_id = format(generate_span.context.trace_id, "032x")
+    assert events[0]["trace_id"] == expected_trace_id
+    assert len(events[0]["trace_id"]) == 32
 
 
 @pytest.mark.asyncio

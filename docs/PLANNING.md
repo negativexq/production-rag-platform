@@ -1022,3 +1022,72 @@ bir garanti değil, olasılıksal bir iyileşme. Bilinçli olarak UI-tarafı bir
 sonra eklenebilir) — mevcut iyileşme yeterli kabul edildi.
 
 123 test yeşil, `ruff check` temiz.
+
+## Sprint 12 (mini) — Observability in UI
+
+Amaç: Jaeger'a hiç gitmeden, Streamlit UI'da her sorgunun pipeline
+adımlarının (embed → retrieve → rerank → generate) gerçek süresini görmek.
+
+### Kapanış notu
+
+**Karar: Jaeger API'sini backend değil, Streamlit çağırıyor.** Yeni bir
+backend proxy endpoint'i eklemek yerine, `app/ui/trace_client.py` doğrudan
+Jaeger'ın kendi HTTP API'sine (`GET /api/traces/{traceID}`) bağlanıyor.
+Gerekçe: Jaeger zaten Sprint 0'dan beri host'tan erişilebilir
+(`docker-compose.yml`'deki `16686:16686` port mapping'i), backend'e sadece
+bu iş için bir JSON proxy'si eklemenin (yeniden build gerektirir, Sprint
+10/11'de ~50dk'ya varan sürelerle görüldü) bir gerekçesi yok. Sprint 11'in
+kurduğu deseni (UI, backend'e salt-okur bir istemci olarak bağlanıyor,
+backend'i değiştirmeden) Jaeger için de tekrarladı.
+
+**Trace ID taşıma**: `app/llm/generate.py`'deki `stream_answer`, `"generate"`
+span'i başladıktan hemen sonra `span.get_span_context().trace_id`'yi
+32-karakterlik hex'e çevirip (`format(trace_id, "032x")`, Jaeger API'sinin
+beklediği format) mevcut metadata event'ine (Sprint 7) ekliyor. `generate`
+kök span değil (`chat_request` kök) ama trace_id trace genelinde aynı
+olduğu için ayrıca kökü aramaya gerek yok — gerçek bir `InMemorySpanExporter`
+testiyle doğrulandı (`test_stream_answer_metadata_trace_id_matches_the_generate_span`).
+
+**Jaeger API'sinin gerçek response şekli (varsayılmadı, curl ile
+doğrulandı)**: `GET /api/traces/{traceID}` → `{"data": [{"spans": [{
+"operationName": ..., "startTime": <mikrosaniye>, "duration": <mikrosaniye>,
+...}]}]}`. Gerçek bir trace ID ile (`curl http://localhost:16686/api/traces/...`)
+doğrulandı, tüm 6 span'in (`chat_request`, `load_models`, `embed_query`,
+`retrieve_hybrid`, `rerank`, `generate`) beklenen alanlarla döndüğü görüldü.
+
+**Gerçek bir bug bulundu ve düzeltildi — kısmi indexlenmiş trace**:
+Tarayıcı doğrulaması sırasında panel bazen `generate` (en uzun süren, son
+kapanan span) barını hiç göstermiyordu. Kök sebep: `BatchSpanProcessor`
+(Sprint 8) span'leri toplu export ediyor — bazı child span'ler (`embed_query`,
+`rerank`) Jaeger'a ulaşmışken, en son kapanan span henüz export edilmemiş
+olabiliyor. İlk `fetch_trace_spans` implementasyonu "herhangi span geldi mi"
+diye kontrol ediyordu, bu yüzden kısmi bir batch'i "tamam" sayıp erken
+dönüyordu. **Düzeltme**: retry artık `chat_request` (kök span, her zaman en
+son kapanan — Sprint 8) spesifik olarak görününceye kadar devam ediyor,
+sadece "spans boş değil" değil. Yeni bir regresyon testi eklendi
+(`test_fetch_trace_spans_keeps_retrying_when_root_span_is_missing`) — bu
+tam senaryoyu (kısmi batch → tam batch) simüle ediyor.
+
+**Retry/polling kararı**: Varsayılan 5 deneme, 1s ara — sınırsız değil.
+Tüm denemeler boşsa (ya da kök span hiç gelmezse) `fetch_trace_spans` hata
+fırlatmadan boş liste döndürüyor; UI bunu "Trace not indexed by Jaeger yet"
+mesajıyla gösteriyor, spinner'da asılı kalmıyor.
+
+**Gerçekten doğrulandı (iki kaynak yan yana)**: Backend yeniden build edilip
+(`docker compose build backend`, CPU-only torch sayesinde hızlı), `make ui`
+ile Streamlit başlatıldı. Tarayıcıdan gerçek bir soru soruldu, "🔍 Pipeline
+trace" paneli açıldı — 5 span'in hepsi (`embed_query`, `retrieve_hybrid`,
+`rerank`, `generate`, `load_models`) bar chart'ta göründü, "Total: 6485.1 ms"
+yazısı çıktı. Aynı trace ID ile `curl http://localhost:16686/api/traces/{id}`
+çekildi: `chat_request` (kök) süresi **6485.1ms** — UI'daki "Total" ile
+**birebir aynı**. Bar chart'taki her span adı da curl çıktısındaki span
+adlarıyla bire bir eşleşti.
+
+**Kapsam dışı / not edilen (bu sprint'in hedefi değil)**: Doğrulama
+sırasında modelin bazen citation vermediği (boş `citations_found`) ve
+context label'ının (`"[Kaynak: ..., citation tag: ...]"`) bazen cevabın
+içine sızdığı gözlemlendi — bunlar Sprint 11+ post-release notlarındaki
+bilinen model-tutarlılığı sınırlamalarının devamı, bu sprint'in kapsamı
+(gözlemlenebilirlik paneli) dışında, ayrıca dokunulmadı.
+
+129 test yeşil, `ruff check` temiz.
