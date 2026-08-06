@@ -82,7 +82,7 @@ verified in a sprint closing note in [docs/PLANNING.md](docs/PLANNING.md)):
 | Parsing | PyMuPDF (`fitz`) | Page/paragraph-preserving text extraction (Sprint 1) |
 | Chunking | Whitespace token counter, 500/50 (size/overlap) | Provisional default; Sprint 9 found the right size is corpus-dependent, kept as-is (see Known Limitations) |
 | Embedding | Ollama (native, Metal), `nomic-embed-text` | 768-dim, cosine distance; requires `search_document:`/`search_query:` task prefixes for quality (Sprint 2/3) |
-| Generation | Ollama (native, Metal), `qwen2.5:3b-instruct` | Serving-path model; kept small for latency, evaluation judge uses a larger model (see Evaluation row) |
+| Generation | Ollama (native, Metal), `qwen2.5:7b-instruct` | Switched from `qwen2.5:3b-instruct` after a real side-by-side comparison found the 3B model hallucinated a factual detail (wrong company name) with no citation to catch it; 7B was correct and grammatically clean, at ~6x the latency (22s vs 3.7s for the same question) — a deliberate quality-over-speed trade-off, see [docs/PLANNING.md](docs/PLANNING.md) Sprint 12 post-release note |
 | Vector DB | Qdrant | Dense + sparse (BM25 via FastEmbed `Qdrant/bm25`), native RRF fusion (Sprint 2/3). SPLADE was tried and rejected — ~1000x slower than BM25 on an M2 CPU |
 | Metadata filtering | Qdrant payload filters | `doc_id`, `source_filename`, `page_number` (Sprint 4) |
 | Reranking | `sentence-transformers` CrossEncoder, `ms-marco-MiniLM-L-6-v2` | Runs on CPU, ~2.8ms/pair measured (Sprint 5) |
@@ -107,7 +107,7 @@ verified in a sprint closing note in [docs/PLANNING.md](docs/PLANNING.md)):
 ### 1. Install Ollama and pull the models
 
 ```bash
-ollama pull qwen2.5:3b-instruct
+ollama pull qwen2.5:7b-instruct
 ollama pull nomic-embed-text
 ```
 

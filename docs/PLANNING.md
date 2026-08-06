@@ -1091,3 +1091,53 @@ bilinen model-tutarlılığı sınırlamalarının devamı, bu sprint'in kapsam�
 (gözlemlenebilirlik paneli) dışında, ayrıca dokunulmadı.
 
 129 test yeşil, `ruff check` temiz.
+
+### Post-release karar: generation modeli 3B'den 7B'ye geçirildi
+
+**Gerçek kullanımda bulunan sorun**: Sprint 12'nin gözlemlenebilirlik
+panelini test ederken, gerçek bir soruya ("Bu kişi Fibabanka'da hangi
+tarihler arasında çalışmış ve unvanı ne?") `qwen2.5:3b-instruct` şirket
+adını **"Fibonacci Bankası"** diye halüsine etti (gerçek ad: Fibabanka) —
+üstelik hiç citation vermeden, yani `grounded=True` görünüyordu çünkü
+grounding kontrolü sadece citation'ların var olup olmadığına bakıyor,
+cevabın içeriğinin kaynakla semantik olarak örtüşüp örtüşmediğini
+doğrulamıyor. Bu, mimarinin bilinen bir sınırlaması (citation-tabanlı
+grounding, içerik-tabanlı faithfulness değil).
+
+**Gerçek karşılaştırma yapıldı (varsayılmadı)**: Aynı soru, aynı retrieved
+context, aynı prompt ile hem `qwen2.5:3b-instruct` hem `qwen2.5:7b-instruct`
+native Ollama'ya karşı çalıştırıldı (`scripts/` dışı, geçici bir karşılaştırma
+script'iyle — `search()` + `build_messages()` + `OllamaClient.stream_chat()`
+doğrudan çağrıldı):
+
+- **3B (3.7s)**: "İşги ldığına dair..." gibi bozuk Türkçe, kendiyle çelişen
+  bir cümle ("tarih verilmedi" derken sonra "2023-2026" diyor), citation yok.
+  Bu denemede "Fibonacci" hatası tekrarlanmadı ama cevap kalitesi düşüktü.
+- **7B (22.0s)**: Gramatik olarak temiz, doğru şirket adı ("Fibabanka"),
+  doğru tarih (Mart 2023 – Mart 2026), doğru unvan, ve doğru citation
+  (`[s.OmerFaruKOC__CV:1/0]`).
+
+**Karar: generation modeli `qwen2.5:3b-instruct` → `qwen2.5:7b-instruct`.**
+Tek bir örnek karşılaştırmaya dayanıyor (Sprint 9'daki golden-set
+sistematik karşılaştırmasının aksine) — kullanıcı bunu bilerek kabul etti,
+kalite/hız trade-off'unu hız lehine değil kalite lehine çözdü. Gerçek,
+ölçülen maliyet: **~6x gecikme artışı** (3.7s → 22.0s, aynı soru).
+
+**Değiştirilen yerler**: `docker-compose.yml` (`OLLAMA_MODEL`, container'ın
+gerçekten kullandığı değer), `app/shared/config.py` (`Settings.ollama_model`
+varsayılanı), `.env.example` (host'ta native çalıştırma için varsayılan).
+`DEFAULT_JUDGE_MODEL` (`app/evaluation/generation_metrics.py`) zaten 7B'ydi,
+değişmedi — generation ve judge artık aynı modeli kullanıyor, bu da Sprint
+9'un "model-swap'tan kaçınmak için iki fazlı evaluation" optimizasyonunu bu
+varsayılan konfigürasyon için anlamsız kılıyor (swap edilecek iki farklı
+model kalmadı) — ayrı bir düzeltme gerektirmiyor, sadece bir yan not.
+
+**Gerçekten doğrulandı**: Backend yeniden ayağa kaldırıldı (`docker compose
+up -d backend`, `OLLAMA_MODEL` değişikliği env değişkeni olduğu için image
+rebuild gerektirmedi), `/health/ollama` üzerinden container'ın 7B'yi
+görebildiği teyit edildi, ve aynı soru gerçek bir `/chat` isteğiyle tekrar
+denendi: cevap doğru şirket adı, doğru tarih, doğru citation ve
+`grounded: true` ile döndü.
+
+129 test yeşil (model adı değişikliği testleri etkilemedi — testler
+`settings.ollama_model`'i dinamik okuyor), `ruff check` temiz.

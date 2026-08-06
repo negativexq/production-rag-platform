@@ -1,4 +1,4 @@
-"""Generation tests against the REAL native Ollama (qwen2.5:3b-instruct) —
+"""Generation tests against the REAL native Ollama (qwen2.5:7b-instruct) —
 mocking isn't enough here per the sprint's own rule: we need to prove real
 token-by-token streaming latency and real model citation behavior, not just
 that our code calls an API correctly.
