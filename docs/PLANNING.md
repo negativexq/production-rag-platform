@@ -831,3 +831,83 @@ Scope:
 - Citation'lara tıklanınca ilgili sayfa/paragrafın vurgulanması
 
 Definition of Done: PDF yükle → soru sor → streaming cevabı citation'larla birlikte gör, uçtan uca tarayıcıda doğrulanmış.
+
+### Kapanış notu
+
+**Kapsam netleştirildi**: Gerçek kullanıcı talebi, PLANNING.md'deki taslak
+scope'tan biraz farklıydı — citation'lara tıklanınca vurgulama yerine sadece
+görsel olarak ayırt edilebilir olmaları istendi (bold `[s.page/paragraph]`),
+ve backend'e (FastAPI) hiç dokunulmaması, mevcut `/chat` SSE endpoint'ine
+sadece istemci olarak bağlanılması net bir kural olarak belirlendi. Streamlit
+tercih edildi (Next.js değil) — minimal, Python-only, mevcut ingestion
+kodunu doğrudan import edebiliyor.
+
+**Host'ta mı, container'da mı — host'ta çalıştırılıyor**: Backend Sprint
+10'dan beri container'da, Ollama native. Streamlit'i de container'a almak
+(a) ingestion zaten host'ta `make ingest` ile çalışıyor ve UI'nin ingestion
+wrapper'ı aynı host-side kodu çağırıyor, (b) backend zaten `8000` portundan
+dışa açık olduğu için container'dan da host'tan da erişilebilir durumda, (c)
+~50 dakikalık backend build'ini tekrar şişirmemek için gerekçesi yoktu. UI
+`make ui` ile host'ta, ayrı bir venv'den çalıştırılıyor.
+
+**Gerçek bir bağımlılık çakışması bulundu (varsayılmadı, `pip install` ile
+doğrulandı)**: `streamlit==1.61.1`, `starlette>=0.46` istiyor; backend'in
+pin'lediği `fastapi==0.115.6` ise `starlette<0.42` istiyor — aynı ortamda
+çözülemez bir çakışma. UI kodu zaten `app.main`/`app.api.chat`'i hiç import
+etmediği (sadece `app.ingestion.cli` ve HTTP üzerinden `/chat`) için ayrı,
+minimal bir `requirements-ui.txt` + ayrı bir venv (`.venv-ui`) ile çözüldü.
+`fastapi`, `uvicorn`, `sentence-transformers`, `deepeval` UI'nin hiç
+ihtiyaç duymadığı için bu listeye alınmadı.
+
+**Kod tekrarı yok**: `app/ingestion/cli.py`'deki private `_run` fonksiyonu
+`run_ingestion()` adıyla public'e çıkarıldı; hem CLI (`make ingest`) hem de
+Streamlit'in `app/ui/ingest_helper.py`'si aynı fonksiyonu çağırıyor — embed
+client, Qdrant store, sparse encoder wiring'i tek yerde.
+
+**SSE tüketimi**: Streamlit'in kendi execution modeli sync olduğu için
+`httpx.stream(...)` (async değil) kullanıldı; `app/ui/sse_client.py`'deki
+`parse_sse_lines()` backend'in gerçek `event:`/`data:` formatını (Sprint
+6'daki `event: metadata`, düz `data:` token'lar, `event: grounding`) satır
+satır parse ediyor. `st.empty()` placeholder'ı her token geldiğinde
+güncelleniyor — cevap toplanıp sonda tek seferde basılmıyor.
+
+**Gerçek bir Streamlit çalıştırma hatası bulundu ve düzeltildi**: `streamlit
+run app/ui/streamlit_app.py` doğrudan çalıştırıldığında `app.ui.*`
+import'ları `ModuleNotFoundError: No module named 'app'` ile patlıyordu —
+Streamlit script'in kendi dizinini `sys.path`'e ekliyor, proje kökünü değil.
+`Makefile`'daki `ui:` hedefine `PYTHONPATH=.` eklenerek düzeltildi.
+
+**Uçtan uca tarayıcı doğrulaması gerçekten yapıldı (curl ile değil)**: Backend
+stack (`docker compose`) ve `make ui` ayağa kaldırıldı, tarayıcı aracıyla
+`localhost:8501`'e gidildi. Sprint 9'un golden-set PDF'i (`nimbus_handbook.pdf`,
+programatik üretilen, gerçek/doğrulanabilir içerikli) dosya input'una gerçek
+bir `File`/`DataTransfer` enjeksiyonuyla yüklendi (native dosya diyaloğu
+sandbox'lı tarayıcıda görünmediği için), "Ingest" tıklandı — "Upserted 6
+chunk(s) from 1 file(s)" gerçek Qdrant upsert'i doğruladı. Sonra gerçek bir
+soru soruldu ("What are the three paid storage tiers and their monthly
+prices?"): token'ların ekranda tek tek büyüdüğü canlı olarak yakalandı,
+final cevap golden source'taki üç tier'ı ($2.99/$7.99/$19.99) doğru
+citation'larla (`[s.2/0]`) verdi, ve "✅ Grounded — citations: [[2, 0], [2,
+0]]" göründü.
+
+**Bu doğrulama sırasında ikinci gerçek bug bulundu ve düzeltildi**:
+Streamlit'in markdown render'ı çıplak `$` işaretini LaTeX inline math
+başlangıcı sanıyor — cevaptaki `$2.99` ve `$7.99` ekranda `$` işareti
+olmadan, farklı bir fontla (math render'ı) çıkıyordu; sadece `$19.99` (çift
+tırnak/parantez bağlamı farklı olduğu için) düzgün görünüyordu. Gerçek bir
+okunabilirlik hatasıydı (fiyatlar bozuk gösteriliyordu), scope dışı
+sayılmadı: `highlight_citations()` artık citation'ları bold yapmadan önce
+metindeki `$` karakterlerini `\$` ile escape ediyor. Yeni bir test eklendi
+(`test_escapes_dollar_signs_so_they_are_not_read_as_latex`), düzeltme
+tarayıcıda tekrar doğrulandı.
+
+**Kapsam dışı bırakılanlar (bilinçli)**: Çoklu doküman/oturum yönetimi,
+kullanıcı auth, konuşma geçmişinin kalıcı hale getirilmesi (DB yazımı) —
+hepsi `st.session_state` ile sadece o oturum için tutuluyor, sayfa
+yenilenince sıfırlanıyor. Citation'lara tıklayınca vurgulama da kapsam
+dışıydı — sadece görsel ayırt edilebilirlik (bold) yeterliydi.
+
+**Son doğrulama**: 119 test yeşil (Sprint 10'daki 118'e, yeni `$`-escape
+testi eklendi), `ruff check` temiz.
+
+Proje sprint 0'dan 11'e kadar plana göre tamamlandı.

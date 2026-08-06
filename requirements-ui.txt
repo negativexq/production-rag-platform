@@ -1,0 +1,24 @@
+# Streamlit UI — a deliberately separate, minimal dependency set, installed
+# into its own venv (.venv-ui), not requirements.txt's venv. Two real reasons,
+# not just tidiness:
+#
+# 1. streamlit==1.61.1 requires starlette>=0.46, but fastapi==0.115.6 (the
+#    backend's pin) requires starlette<0.42 — a genuine, unresolvable
+#    conflict if both land in the same environment (confirmed via `pip
+#    install`, not assumed).
+# 2. The UI only calls app.ingestion.cli's ingestion pipeline and the /chat
+#    HTTP API — it never imports app.main or app.api.chat, so it never needs
+#    fastapi/uvicorn at all. It also skips sentence-transformers (reranker)
+#    and deepeval (evaluation), neither of which ingestion touches.
+#
+# See docs/PLANNING.md Sprint 11 closing note.
+
+streamlit==1.61.1
+httpx==0.28.1
+pydantic-settings==2.14.2
+pymupdf==1.25.2
+qdrant-client==1.12.1
+fastembed==0.8.0
+opentelemetry-api==1.29.0
+opentelemetry-sdk==1.29.0
+opentelemetry-exporter-otlp-proto-grpc==1.29.0
