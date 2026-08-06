@@ -50,6 +50,28 @@ run the backend on the host instead of in a container for local development
 
 See [docs/PLANNING.md](docs/PLANNING.md) for sprint plans and progress notes.
 
+## What's Here (Sprint 0-10)
+
+Every sprint went test-first, was verified against real data, and was closed
+out with a note in `docs/PLANNING.md` — measured findings instead of
+assumptions (e.g. SPLADE being unacceptably slow on an M2, RAGAS being
+unusable due to a dependency conflict, `OllamaClient`'s 10s timeout turning
+out to be a real production bug) were recorded at the end of each sprint.
+
+| Sprint | Topic |
+|---|---|
+| 0 | Foundation — FastAPI skeleton, Qdrant+Jaeger (Docker), native Ollama |
+| 1 | PDF ingestion — page/paragraph-preserving chunking with PyMuPDF |
+| 2 | Embedding + idempotent Qdrant ingestion (`nomic-embed-text`) |
+| 3 | Hybrid search — dense + sparse (BM25), Qdrant native RRF fusion |
+| 4 | Metadata filtering — payload-based (`doc_id`, `source_filename`, `page_number`) |
+| 5 | Cross-encoder reranking (`ms-marco-MiniLM-L-6-v2`) |
+| 6 | Grounded streaming generation — page/paragraph citations + post-hoc grounding check |
+| 7 | File-based prompt versioning (`prompts/answer_v1.txt`, `v2.txt`) |
+| 8 | OpenTelemetry tracing — the whole pipeline traceable as one waterfall in Jaeger |
+| 9 | Golden-set evaluation (DeepEval + 7B judge) — chunk size/k-n/prompt decisions settled with real data |
+| 10 | Docker Compose polish — backend containerized, Ollama stays native |
+
 ## Prerequisites
 
 - Docker Desktop
@@ -188,3 +210,7 @@ app/
 Dockerfile              # backend image (python:3.12-slim)
 docker-compose.yml        # qdrant + jaeger + backend
 ```
+
+## License
+
+[MIT](LICENSE)
